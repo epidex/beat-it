@@ -88,6 +88,11 @@ static void reset(void)
     memset(ble_held, 0, sizeof ble_held);
     ble_release = 0;
     memset(&bin, 0, sizeof bin);
+    ble_tx_lost = 0;                            /* (1.3) */
+    ble_tx_drain = 0;
+    memset(ble_sent_held, 0, sizeof ble_sent_held);
+    mco_play = 0;
+    mco_u = 0;
     song.sel = 0;
     for (i = 0; i < NPART; i++) {
         host_preset(&trk[i], 0, 1);
@@ -505,6 +510,187 @@ static void t_menu_sig(void)
     check(a != b, "  the radio's state changes it");
 }
 
+/* ---- (1.3) CLOCK OUT to Bluetooth: OFF / USB / BT / USB+BT, each destination its own START / STOP */
+static uint32_t bt_take(uint32_t *f8, uint32_t *fa, uint32_t *fc, uint32_t *other)   /* drains the BLE out ring */
+{
+    uint32_t pkt, t, n = 0;
+    while (ble_app_midi_peek(&pkt, &t)) {
+        uint32_t b = (pkt >> 8) & 0xFFu;
+        *f8 += b == 0xF8u, *fa += b == 0xFAu, *fc += b == 0xFCu, *other += b != 0xF8u && b != 0xFAu && b != 0xFCu;
+        ble_app_midi_pop();
+        n++;
+    }
+    return n;
+}
+static uint32_t usb_take(uint32_t *f8, uint32_t *fa, uint32_t *fc)
+{
+    uint32_t n = 0;
+    while (mo_r != mo_w) {
+        uint32_t b = (midi_out_q[mo_r++ % MQ] >> 8) & 0xFFu;
+        *f8 += b == 0xF8u, *fa += b == 0xFAu, *fc += b == 0xFCu;
+        n++;
+    }
+    return n;
+}
+static void t_clock_out_bt(void)
+{
+    uint32_t n = 32, i, beats = 4, nb, f8 = 0, fa = 0, fc = 0, ot = 0, uf8 = 0, ufa = 0, ufc = 0, pkt, t, last = 0, mono = 1;
+    reset();
+    usb.config = 1;
+    check(GP[G_CLKOUT].max == 3 && !strcmp(GP[G_CLKOUT].names[2], "BT") && !strcmp(GP[G_CLKOUT].names[3], "USB+BT"),
+          "1.3: GLO > MIDI 3 > CLOCK: OFF / USB / BT / USB+BT");
+    ble_midi_set(1, 1);
+    ble_out_on = 1;
+    song.g[G_CLKOUT] = 2;
+    nb = beats * BEAT_U / (n * 120u);
+    for (i = 0; i < nb; i++) {
+        clkout_block(n);
+        bt_take(&f8, &fa, &fc, &ot);
+    }
+    usb_take(&uf8, &ufa, &ufc);
+    check(f8 >= 24u * beats - 1u && f8 <= 24u * beats && !fa && !fc && !ot && !uf8,
+          "CLOCK BT, stopped, 4 beats at 120: 24 pulses a beat to Bluetooth only, no START, nothing on USB");
+    song.playing = 1;
+    f8 = 0;
+    fm1_ms = 5000u;
+    clkout_block(n);
+    check(ble_app_midi_peek(&pkt, &t) && ((pkt >> 8) & 0xFFu) == 0xFAu && t == 5000u, "PLAY: START first, with the block's time");
+    ble_app_midi_pop();
+    check(ble_app_midi_peek(&pkt, &t) && ((pkt >> 8) & 0xFFu) == 0xF8u, "... then the downbeat's pulse");
+    ble_app_midi_pop();
+    for (i = 0; i < nb; i++) {
+        fm1_ms += 1u;
+        clkout_block(n);
+        while (ble_app_midi_peek(&pkt, &t)) {
+            mono &= t >= last;
+            last = t;
+            ble_app_midi_pop();
+        }
+    }
+    check(mono && last > 5000u, "... the pulses carry their blocks' times (for the BLE-MIDI timestamps), in order");
+    song.playing = 0;
+    clkout_block(n);
+    f8 = fa = fc = ot = 0;
+    bt_take(&f8, &fa, &fc, &ot);
+    check(fc == 1u && !fa, "STOP: STOP to Bluetooth");
+    usb_take(&uf8, &ufa, &ufc);
+    check(!uf8 && !ufa && !ufc, "CLOCK BT: USB got nothing all along");
+
+    /* USB+BT: both, and a phone that comes and goes while the FM-1 plays */
+    song.g[G_CLKOUT] = 3;
+    ble_out_on = 0;                             /* (no central listening yet) */
+    song.playing = 1;
+    clkout_block(n);
+    clkout_block(n);
+    uf8 = ufa = ufc = 0;
+    usb_take(&uf8, &ufa, &ufc);
+    check(ufa == 1u && uf8 >= 1u && mco_play == CO_USB, "USB+BT, no central: USB gets START and the clock, Bluetooth nothing");
+    ble_out_on = 1;                             /* a phone connects and subscribes while it plays */
+    clkout_block(n);
+    f8 = fa = fc = ot = 0;
+    bt_take(&f8, &fa, &fc, &ot);
+    uf8 = ufa = ufc = 0;
+    usb_take(&uf8, &ufa, &ufc);
+    check(fa == 1u && f8 >= 1u && !ufa && mco_play == (CO_USB | CO_BT),
+          "... a central that subscribes mid-song: START then (to it only, USB not restarted), the clock follows");
+    ble_out_on = 0;                             /* it goes away */
+    clkout_block(n);
+    check(mco_play == CO_USB && bmo_r == bmo_w, "... it goes away: it is forgotten, no STOP into the void, USB keeps going");
+    ble_out_on = 1;
+    clkout_block(n);
+    f8 = fa = fc = ot = 0;
+    bt_take(&f8, &fa, &fc, &ot);
+    check(fa == 1u, "... it comes back: START again");
+    song.g[G_SYNC] = 3;                         /* following Bluetooth's own clock: nothing back out */
+    clkout_block(n);
+    f8 = fa = fc = ot = 0;
+    bt_take(&f8, &fa, &fc, &ot);
+    uf8 = ufa = ufc = 0;
+    usb_take(&uf8, &ufa, &ufc);
+    check(fc == 1u && ufc == 1u && !mco_play, "SYNC changed to follow a clock while playing: STOP to both, then silence");
+    for (i = 0; i < 20u; i++)
+        clkout_block(n);
+    check(bmo_r == bmo_w && mo_r == mo_w, "... a FM-1 that follows a clock never sends one (no loop through a phone)");
+    song.g[G_SYNC] = 0;
+    ble_midi_set(1, 0);                         /* SEND OFF: the clock may not go to Bluetooth */
+    clkout_block(n);
+    clkout_block(n);
+    f8 = fa = fc = ot = 0;
+    bt_take(&f8, &fa, &fc, &ot);
+    check(!f8 && !(mco_play & CO_BT), "BT MIDI SEND OFF: no clock to Bluetooth (CLOCK USB+BT acts as USB)");
+    song.playing = 0;
+    clkout_block(n);
+    ble_midi_set(0, 0);
+}
+
+/* ---- (1.3) SEND OFF ends what the FM-1 left sounding at the central; a congested link keeps room for note-offs */
+static void t_send_close(void)
+{
+    uint32_t pkt, t, offs = 0, cc123 = 0, stops = 0, other = 0, i, k;
+    reset();
+    ble_midi_set(1, 1);
+    ble_out_on = 1;
+    midi_out_event(0x09u | 0x90u << 8 | 60u << 16 | 100u << 24);   /* two notes on channel 1 */
+    midi_out_event(0x09u | 0x90u << 8 | 64u << 16 | 100u << 24);
+    midi_out_event(0x08u | 0x80u << 8 | 64u << 16);                /* one ended */
+    midi_out_event(0x09u | 0x92u << 8 | 40u << 16 | 90u << 24);    /* one on channel 3 */
+    for (k = 0; k < 6u; k++)                                        /* six on channel 10 */
+        midi_out_event(0x09u | 0x99u << 8 | (36u + k) << 16 | 100u << 24);
+    while (ble_app_midi_peek(&pkt, &t))
+        ble_app_midi_pop();
+    song.playing = 1;
+    song.g[G_CLKOUT] = 2;
+    clkout_block(32);                           /* the Bluetooth clock told START */
+    while (ble_app_midi_peek(&pkt, &t))
+        ble_app_midi_pop();
+    ble_midi_set(1, 0);                         /* SEND OFF, RECEIVE still on: the link stays */
+    while (ble_app_midi_peek(&pkt, &t)) {
+        uint32_t st = (pkt >> 8) & 0xFFu, d1 = (pkt >> 16) & 0x7Fu;
+        if (st == 0x80u && d1 == 60u) offs |= 1;
+        else if (st == 0x82u && d1 == 40u) offs |= 2;
+        else if (st == 0xB9u && d1 == 123u) cc123++;
+        else if (st == 0xFCu) stops++;
+        else other++;
+        ble_app_midi_pop();
+    }
+    check(offs == 3u && cc123 == 1u && stops == 1u && !other,
+          "1.3: SEND OFF: a note-off for each note left on (C4 ch 1, E2 ch 3), ALL NOTES OFF on ch 10 (6 held), STOP; no more");
+    midi_out_event(0x09u | 0x90u << 8 | 62u << 16 | 100u << 24);
+    clkout_block(32);
+    check(!ble_app_midi_peek(&pkt, &t) && !ble_tx_drain, "... then nothing goes: the ring closed");
+    ble_midi_set(1, 1);
+    clkout_block(32);
+    check(ble_app_midi_peek(&pkt, &t) && ((pkt >> 8) & 0xFFu) == 0xFAu, "SEND back ON while playing: START to the central again");
+    while (ble_app_midi_peek(&pkt, &t))
+        ble_app_midi_pop();
+    song.playing = 0;
+    clkout_block(32);
+    while (ble_app_midi_peek(&pkt, &t))
+        ble_app_midi_pop();
+
+    /* a link that cannot keep up (the central reads nothing): new notes and pulses dropped and counted, note-offs fit */
+    midi_out_event(0x09u | 0x90u << 8 | 70u << 16 | 100u << 24);
+    for (i = 0; i < BMQ; i++)
+        midi_out_event(0x0Bu | 0xB0u << 8 | 1u << 16 | (i & 127u) << 24);   /* a mod wheel sweep floods it */
+    check(bmo_w - bmo_r == BMQ - BMQ_KEEP && ble_tx_lost > 0u, "congested: the ring stops taking ordinary messages 16 short of full, LOST counted");
+    midi_out_event(0x09u | 0x90u << 8 | 71u << 16 | 100u << 24);
+    midi_out_event(0x08u | 0x80u << 8 | 70u << 16);
+    midi_out_event(0x09u | 0x90u << 8 | 72u << 16 | 0u << 24);              /* (a note-off as velocity 0) */
+    midi_out_event(0x0Bu | 0xB0u << 8 | 64u << 16 | 0u << 24);              /* (sustain up) */
+    check(bmo_w - bmo_r == BMQ - BMQ_KEEP + 3u, "... a new note dropped, but the note-offs (8x, 9x vel 0) and the pedal up still go");
+    {
+        int warn = 0;
+        int up = ble_up;
+        ble_up = 1;
+        check(strstr(ble_link_sub(&warn), "LOST") != 0 && warn, "... BT CONNECTION's line shows the sent messages lost too, in amber");
+        ble_up = (uint8_t)up;
+    }
+    ble_out_on = 0;
+    ble_app_state();
+    check(bmo_r == bmo_w, "the central goes away: what waited for it is dropped");
+    ble_midi_set(0, 0);
+}
+
 int main(void)
 {
     t_off_at_boot();
@@ -517,6 +703,8 @@ int main(void)
     t_cal_backup();
     t_clock_age();
     t_clock_follow();
+    t_clock_out_bt();
+    t_send_close();
     t_send_off_ring();
     t_link_line();
     t_menu_sig();

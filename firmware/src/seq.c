@@ -3244,30 +3244,66 @@ static uint32_t mclk_adv(uint32_t n)               /* units to advance this bloc
  * stopped too (the other gear knows the tempo before PLAY); START as the sequencer starts (after a count-in: when it
  * starts), with the pulse of its downbeat; STOP when it stops (CLK OUT or SYNC changed while playing: STOP too). Only
  * while SYNC is INT: a FM-1 that follows a clock never sends one back (no loop through a computer). A pulse goes out
- * in the block it falls in: < 1 ms late */
+ * in the block it falls in: < 1 ms late.
+ * (Beat It 1.3) CLOCK OUT: OFF / USB / BT / USB+BT. Each destination keeps its own START / STOP (mco_play, bit 0 USB,
+ * bit 1 BT): Bluetooth counts as a destination only while BT MIDI SEND is on and a central listens (ble_clk_ready,
+ * midi_ble.c), so a phone that connects while the FM-1 plays gets START then, and one that goes away is not "told"
+ * STOP into the void; USB's clock never stutters for it. The pulses to Bluetooth carry the block's time (fm1_ms) into
+ * the BLE-MIDI timestamps (ble_midi_out), so the receiver can time them as sent */
+#define CO_USB 1u
+#define CO_BT 2u
 static uint32_t mco_u;                            /* units since the last pulse */
-static uint8_t mco_play;                          /* the other gear was told START */
+static volatile uint8_t mco_play;                 /* the destinations told START (CO_USB, CO_BT) */
+#if FELUCCA_BLE && !FELUCCA_LOADER
+static int ble_clk_ready(void);                   /* (midi_ble.c) SEND on and a central listening */
+#endif
+static void clk_out(uint32_t st, uint32_t dest)
+{
+    uint32_t pkt = 0x0Fu | st << 8;
+    if (dest & CO_USB)
+        midi_out_event(pkt);                       /* (usb.c: realtime messages go to USB only) */
+#if FELUCCA_BLE && !FELUCCA_LOADER
+    if (dest & CO_BT)
+        ble_midi_out(pkt);
+#endif
+}
+static uint32_t clkout_dest(void)                 /* where the clock goes now */
+{
+    uint32_t d;
+    if (song.g[G_SYNC])
+        return 0;
+    d = (uint32_t)song.g[G_CLKOUT] & 3u;
+#if FELUCCA_BLE && !FELUCCA_LOADER
+    if ((d & CO_BT) && !ble_clk_ready())
+        d &= ~CO_BT;
+#else
+    d &= CO_USB;
+#endif
+    return d;
+}
 static void clkout_block(uint32_t n)
 {
-    if (!song.g[G_CLKOUT] || song.g[G_SYNC]) {
-        if (mco_play)
-            midi_out_event(0x0Fu | 0xFCu << 8);       /* STOP */
-        mco_play = 0;
+    uint32_t dest = clkout_dest(), gone, fresh;
+    gone = mco_play & ~(song.playing ? dest : 0u);
+    if (gone)
+        clk_out(0xFCu, gone);                      /* STOP to each one that had START and no longer plays */
+    mco_play = (uint8_t)(mco_play & ~gone);
+    if (!dest) {
         mco_u = 0;
         return;
     }
-    if (song.playing && !mco_play) {
-        midi_out_event(0x0Fu | 0xFAu << 8);           /* START, then the downbeat's pulse */
-        midi_out_event(0x0Fu | 0xF8u << 8);
-        mco_u = 0;
-    } else if (!song.playing && mco_play) {
-        midi_out_event(0x0Fu | 0xFCu << 8);           /* STOP */
+    fresh = song.playing ? dest & ~mco_play : 0u;
+    if (fresh) {
+        if (!mco_play)
+            mco_u = 0;                             /* (the first: the pulses from its downbeat, as 2.7) */
+        clk_out(0xFAu, fresh);                     /* START, then the downbeat's pulse */
+        clk_out(0xF8u, fresh);
+        mco_play = (uint8_t)(mco_play | fresh);
     }
-    mco_play = (uint8_t)(song.playing != 0);
     mco_u += n * (uint32_t)song.g[G_BPM];
     while (mco_u >= MCLK_PULSE_U) {
         mco_u -= MCLK_PULSE_U;
-        midi_out_event(0x0Fu | 0xF8u << 8);           /* a pulse */
+        clk_out(0xF8u, dest);                      /* a pulse */
     }
 }
 

@@ -3,7 +3,8 @@
 Beat It is a custom firmware for the M-VAVE FM-1, built on SLOOP (isod89/sloop-fm1, GPL-3.0-only). It keeps the drums
 and the two FM engines, adds a purple-and-black theme, a BEAT IT start-up screen, a full-screen scope with SCOPE VIEW
 presets, a dedicated MIDI menu, and (from 1.1) Bluetooth MIDI using Optimist's open-source driver, with a backup of the
-unit's radio calibration.
+unit's radio calibration. 1.2 added following a Bluetooth clock; 1.3 adds sending the clock over Bluetooth (CLOCK OUT BT / USB+BT)
+and ends held notes when BT MIDI SEND is turned off.
 
 **Status:** builds and passes its tests in a simulator. It has not run on a real FM-1, and Bluetooth has never been
 tried over a real radio.

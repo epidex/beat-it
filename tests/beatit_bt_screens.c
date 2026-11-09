@@ -94,6 +94,16 @@ int main(int argc, char **argv)
     bt_rx = 0;
     show(MI_MSYNC, "bt12-3-midi-clock-in-bt");
     ck(!strcmp(mi_value(MI_MSYNC, &(uint16_t){0}), "BT"), "MIDI > CLOCK IN shows BT");
+    /* (1.3) MIDI: CLOCK OUT = USB+BT (the FM-1 the clock master: SYNC INT) */
+    song.g[G_SYNC] = 0;
+    song.g[G_CLKOUT] = 3;
+    ble_midi_set(1, 1);
+    bt_rx = bt_tx = 1;
+    show(MI_MCLK, "bt13-4-midi-clock-out-usb-bt");
+    ck(!strcmp(mi_value(MI_MCLK, &(uint16_t){0}), "USB+BT"), "1.3: MIDI > CLOCK OUT shows USB+BT");
+    song.g[G_CLKOUT] = 2;
+    show(MI_MCLK, "bt13-5-midi-clock-out-bt");
+    ck(!strcmp(mi_value(MI_MCLK, &(uint16_t){0}), "BT"), "1.3: MIDI > CLOCK OUT shows BT");
     printf("beatit_bt_screens: %d failed\n", bad);
     return bad;
 }

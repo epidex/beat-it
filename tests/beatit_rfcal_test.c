@@ -157,6 +157,23 @@ int main(void)
     reboot();
     ck(ble_rf_src == BLE_RF_NONE && !ble_rf_copy_ok(ble_rf_bak), "older settings without a backup and no VM: MISSING (NO RF CAL)");
 
+    {                                                 /* (1.3) CLOCK OUT (the BT bit: REMOTE's spare bit 7) saved and loaded */
+        int ok = 1;
+        uint32_t r, c;
+        for (r = 0; r <= 16u; r += 8u)
+            for (c = 0; c < 4u; c++) {
+                midi_set[8] = (uint8_t)r, midi_set[9] = (uint8_t)c;
+                settings_save();
+                {                             /* (RAM back to the power-on values: an all-default MIDI part is not stored) */
+                    static const uint8_t d0[10] = MIDI_SET_DEF;
+                    midi_set[8] = d0[8], midi_set[9] = d0[9];
+                }
+                reboot();
+                ok &= midi_set[8] == r && midi_set[9] == c;
+            }
+        ck(ok, "1.3: CLOCK OUT (OFF / USB / BT / USB+BT) x REMOTE (OFF, CH 8, CH 16): saved and loaded back as set");
+    }
+
     printf("beatit_rfcal_test: %s\n", bad ? "FAILED" : "all checks ok");
     return bad != 0;
 }

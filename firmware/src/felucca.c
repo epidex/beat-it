@@ -14,6 +14,9 @@
 #include "fm1_cpu1.h"      /* the second core (X0X): started in main.c, used by the render later */
 #include "felucca_tables.h"
 
+#ifndef FELUCCA_BLE
+#define FELUCCA_BLE 1            /* Beat It: Bluetooth LE MIDI (midi_ble.c, Optimist's open BLE stack in ble/)    (1.3: before params.c, whose CLOCK OUT list depends on it) */
+#endif
 #include "libc.c"
 #include "lcd.c"
 #include "gfx.c"
@@ -22,6 +25,9 @@
 #include "engines.c"
 #include "drums.c"
 #include "params.c"
+#if FELUCCA_BLE                  /* (1.3) 1.2's device build set FELUCCA_BLE after params.c: SYNC had no BT there */
+_Static_assert(SYNC_N == 4u && sizeof N_CLKOUT / sizeof N_CLKOUT[0] == 4u, "a Bluetooth build lists SYNC BT and CLOCK BT");
+#endif
 #include "voice.c"
 #include "slicer.c"          /* per-track SLICER insert, used by fx.c */
 #include "fx.c"
@@ -46,9 +52,6 @@
 #endif
 #ifndef FELUCCA_UAC_TONE
 #define FELUCCA_UAC_TONE 0       /* bench: the USB input sends test triangles instead of the music */
-#endif
-#ifndef FELUCCA_BLE
-#define FELUCCA_BLE 1            /* Beat It: Bluetooth LE MIDI (midi_ble.c, Optimist's open BLE stack in ble/) */
 #endif
 #if FELUCCA_BLE
 /* (ble/ble_stack.c picks the FM-1 radio driver, ble/ble_hw_wl82.c; host tests: FELUCCA_BLE_STUB) */

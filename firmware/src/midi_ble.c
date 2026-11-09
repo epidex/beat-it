@@ -43,6 +43,13 @@ static uint8_t ble_rf_bak_owed;                /* settings saves still owed for 
 static struct ble_vm_info ble_vm_seen;
 static struct ble_rf_trims ble_trims;
 static volatile uint32_t ble_rx_count, ble_tx_count, ble_rx_lost;   /* (BT CONNECTION's line, the host tests) */
+/* (1.3) the send side: what did not fit the out ring (BT CONNECTION's LOST counts both ways); the notes the FM-1 has on
+ * at the central (bit per note, per channel: the audio ISR's), ended when BT MIDI SEND goes OFF; a drain of those
+ * note-offs (and the clock's STOP) in progress after SEND OFF, the BLE side sending them before it closes the ring */
+static volatile uint32_t ble_tx_lost;
+static uint8_t ble_sent_held[16][16];
+static volatile uint8_t ble_tx_drain;
+#define BMQ_KEEP 16u                           /* the out ring's last slots: for what ends a sound (ble_out_ends) */
 #define BLE_RT_AGE_MAX 120u                    /* ms: a realtime message's age within its packet, clamped */
 /* (1.2) what the last run left in the breadcrumb (hal/fm1_ble_rf.h), read once at boot: the step a radio start-up
  * had reached when the FM-1 reset, or 0 when it had finished (RUNNING / SET_OFF) or there is none (a power cycle) */
@@ -53,8 +60,11 @@ BLE_API void ble_app_state(void)               /* the BLE interrupts, or the men
 {
     uint8_t c = (uint8_t)ble_connected();
     ble_out_on = (uint8_t)ble_midi_ready();
-    if (!ble_out_on)
+    if (!ble_out_on) {
         bmo_r = bmo_w;                          /* nothing waits for a central that does not listen */
+        ble_tx_drain = 0;
+        memset(ble_sent_held, 0, sizeof ble_sent_held);   /* (1.3) its notes went with it: none to end later */
+    }
     if (ble_was_conn && !c)
         ble_release = 1;                        /* its notes are not ended by a note-off that will never come */
     ble_was_conn = c;
@@ -62,12 +72,14 @@ BLE_API void ble_app_state(void)               /* the BLE interrupts, or the men
 
 BLE_API int ble_app_midi_peek(uint32_t *pkt, uint32_t *t_ms)
 {
-    if (!ble_tx_on) {                           /* (1.2) SEND OFF: dropped here, by the ring's one consumer. 1.1 */
+    if (!ble_tx_on && !ble_tx_drain) {          /* (1.2) SEND OFF: dropped here, by the ring's one consumer. 1.1 */
         bmo_r = bmo_w;                          /* reset bmo_r from the main loop, which a BLE interrupt between */
         return 0;                               /* its peek and its pop could push past bmo_w: garbage sent */
     }
-    if (bmo_r == bmo_w)
+    if (bmo_r == bmo_w) {
+        ble_tx_drain = 0;                       /* (1.3) SEND OFF's note-offs all sent: the ring closes */
         return 0;
+    }
     RING_PUBLISH();                             /* the slot read after the index (the audio ISR fills it) */
     *pkt = ble_out_q[bmo_r % BMQ];
     *t_ms = ble_out_ms[bmo_r % BMQ];
@@ -148,15 +160,88 @@ BLE_API void ble_app_midi_in(uint32_t pkt, uint16_t ts, uint16_t last_ts)   /* t
     bmi_w++;
 }
 
-static void ble_midi_out(uint32_t pkt)          /* the audio ISR, from usb.c midi_out_event */
+/* (1.3) a message that ends a sound at the receiver: a note off (8x, or 9x at velocity 0), ALL NOTES OFF / ALL SOUND
+ * OFF (CC 123 / 120), the sustain pedal up (CC 64 < 64), the clock's STOP. When the link is slow (a phone at a long
+ * connection interval, the clock going out too) the ring's last BMQ_KEEP slots are kept for these, so a congested
+ * link drops a clock pulse or a new note, never the note-off that would have left a note stuck on the phone */
+static int ble_out_ends(uint32_t pkt)
 {
-    if (!ble_out_on || !ble_tx_on || bmo_w - bmo_r >= BMQ)
-        return;
+    uint32_t st = (pkt >> 8) & 0xFFu, d1 = (pkt >> 16) & 0x7Fu, d2 = (pkt >> 24) & 0x7Fu;
+    switch (st & 0xF0u) {
+    case 0x80u: return 1;
+    case 0x90u: return d2 == 0u;
+    case 0xB0u: return d1 == 123u || d1 == 120u || (d1 == 64u && d2 < 64u);
+    default: return st == 0xFCu;
+    }
+}
+
+static void ble_sent_seen(uint32_t pkt)         /* (1.3) the notes the FM-1 has on at the central */
+{
+    uint32_t st = (pkt >> 8) & 0xF0u, ch = (pkt >> 8) & 15u, n = (pkt >> 16) & 0x7Fu;
+    if (st == 0x90u && ((pkt >> 24) & 0x7Fu))
+        ble_sent_held[ch][n >> 3] |= (uint8_t)(1u << (n & 7u));
+    else if (st == 0x80u || st == 0x90u)
+        ble_sent_held[ch][n >> 3] &= (uint8_t)~(1u << (n & 7u));
+    else if (st == 0xB0u && (n == 123u || n == 120u))
+        memset(ble_sent_held[ch], 0, sizeof ble_sent_held[ch]);
+}
+
+static int ble_out_push(uint32_t pkt)          /* the ring's one producer (the audio ISR, or the menu with it held) */
+{
+    uint32_t used = bmo_w - bmo_r;
+    if (!ble_out_on || used >= BMQ || (used >= BMQ - BMQ_KEEP && !ble_out_ends(pkt))) {
+        ble_tx_lost++;
+        return 0;
+    }
     ble_out_q[bmo_w % BMQ] = pkt & ~0xF0u;      /* (cable 0 to the encoder) */
     ble_out_ms[bmo_w % BMQ] = fm1_ms;
     RING_PUBLISH();
     bmo_w++;
     ble_tx_count++;
+    ble_sent_seen(pkt);
+    return 1;
+}
+
+static void ble_midi_out(uint32_t pkt)          /* the audio ISR, from usb.c midi_out_event and seq.c clk_out */
+{
+    if (!ble_out_on || !ble_tx_on)
+        return;
+    ble_out_push(pkt);
+}
+
+/* (1.3) seq.c clkout_dest: the clock may go to Bluetooth (CLOCK OUT BT / USB+BT): SEND on, a central listening */
+static int ble_clk_ready(void) { return ble_on && ble_tx_on && ble_out_on; }
+
+/* (1.3) BT MIDI SEND going OFF while a central listens: what the FM-1 left sounding there is ended first. A note-off
+ * for each note it has on (a channel with more than 4: ALL NOTES OFF, CC 123), and STOP when the Bluetooth clock had
+ * told it START; then the BLE side sends those (ble_tx_drain) before it drops the rest. 1.2 just went quiet, which
+ * left a phone app's notes hanging and its sequencer running. The main loop, with every interrupt held: the audio
+ * ISR (the ring's producer) is not in the middle of a push */
+static void ble_send_close(void)
+{
+    uint32_t ch, n, k, cnt, f = irq_save();
+    if (ble_out_on) {
+        if (mco_play & CO_BT) {
+            ble_out_push(0x0Fu | 0xFCu << 8);   /* STOP */
+            mco_play = (uint8_t)(mco_play & ~CO_BT);
+        }
+        for (ch = 0; ch < 16u; ch++) {
+            for (k = cnt = 0; k < 16u; k++)
+                cnt += (uint32_t)__builtin_popcount(ble_sent_held[ch][k]);
+            if (cnt > 4u) {
+                ble_out_push(0x0Bu | (0xB0u | ch) << 8 | 123u << 16);
+                continue;
+            }
+            for (n = 0; cnt && n < 128u; n++)
+                if (ble_sent_held[ch][n >> 3] & (1u << (n & 7u))) {
+                    ble_out_push(0x08u | (0x80u | ch) << 8 | n << 16);
+                    cnt--;
+                }
+        }
+        ble_tx_drain = 1;
+    }
+    memset(ble_sent_held, 0, sizeof ble_sent_held);
+    irq_restore(f);
 }
 
 static void ble_note_seen(uint32_t pkt)         /* the notes a central has on, to end them if it is gone */
@@ -340,6 +425,9 @@ static void ble_midi_init(void)                 /* at boot, before the interrupt
 static void ble_midi_set(uint8_t rx, uint8_t tx)
 {
     uint8_t on = (uint8_t)(rx || tx);
+    if (ble_tx_on && !tx && rx && ble_on)
+        ble_send_close();                       /* (1.3) the notes it left on at the central ended first (RECEIVE
+                                                 * still on, so the link stays: both OFF ends the link itself) */
     ble_rx_on = rx;
     ble_tx_on = tx;                             /* (SEND OFF: ble_app_midi_peek empties the out ring) */
     if (!rx)
@@ -403,13 +491,13 @@ static const char *ble_link_sub(int *warn)
         str_cpy(b + str_len(b), ble_step_name(ble_hung_step), sizeof b - str_len(b));
         return b;
     }
-    if (!ble_up || (!ble_rx_count && !ble_tx_count && !ble_rx_lost))
+    if (!ble_up || (!ble_rx_count && !ble_tx_count && !ble_rx_lost && !ble_tx_lost))
         return "";
     str_cpy(b, "IN ", sizeof b);
     fmt_int(b + str_len(b), (int32_t)(ble_rx_count % 100000u));
     str_cpy(b + str_len(b), " OUT ", sizeof b - str_len(b));
     fmt_int(b + str_len(b), (int32_t)(ble_tx_count % 100000u));
-    n = ble_rx_lost;
+    n = ble_rx_lost + ble_tx_lost;             /* (1.3: both ways) */
     if (n) {
         *warn = 1;
         str_cpy(b + str_len(b), " LOST ", sizeof b - str_len(b));
@@ -428,7 +516,7 @@ static uint32_t ble_menu_sig(void)
                  8u * (uint32_t)ble_rf_bak_owed + 32u * (uint32_t)ble_hung_step + 1024u * (uint32_t)ble_up;
     if (fm1_ms - t >= 500u) {
         t = fm1_ms;
-        cnt = ble_rx_count * 7u + ble_tx_count * 131u + ble_rx_lost * 8191u;
+        cnt = ble_rx_count * 7u + ble_tx_count * 131u + (ble_rx_lost + ble_tx_lost) * 8191u;
     }
     return s * 2654435761u + cnt;
 }
