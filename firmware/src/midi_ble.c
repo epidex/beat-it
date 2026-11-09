@@ -5,8 +5,11 @@
  * This file is the glue to SLOOP's MIDI rings, adapted from Optimist's io/midi/midi_ble.c:
  *   in   the stack decodes a central's BLE-MIDI writes, in the BLE interrupts, into USB-MIDI event packets. They wait
  *        in ble_in_q (one producer: the BLE interrupts) until the TIMER5 tick (main.c, beside uart_midi_poll) moves
- *        them into usb.c's midi_in_q, whose producers all run in TIMER5. Channel voice messages only (cable 2);
- *        clock / transport from Bluetooth are not followed (SYNC stays INT / USB / TRS).
+ *        them into usb.c's midi_in_q, whose producers all run in TIMER5. Channel voice messages (cable 2), and
+ *        (1.2) clock / START / CONTINUE / STOP for SYNC = BT (seq.c mclk_event, src 3): each realtime message keeps,
+ *        in its packet's third byte, how many ms ago it was sent (at most BLE_RT_AGE_MAX), from the sender's own
+ *        BLE-MIDI timestamps (ble_in_time, as Optimist times its SYNC BLE), so the clock follower times it as sent,
+ *        not by the connection event that brought it.
  *   out  midi_out_event (usb.c: the audio ISR, the stream USB MIDI gets) queues each event in ble_out_q while a
  *        central has the MIDI notifications on; the stack packs them at the next connection event.
  *   BT MIDI RECEIVE / BT MIDI SEND (ui_menu.c) gate in and out; the radio is on while either is ON.
@@ -39,7 +42,12 @@ static uint8_t ble_rf_bak_owed;                /* settings saves still owed for 
 #define BLE_RF_BAK_OFF (ST_SIDE_OFF + 80u)     /* in a settings copy's sector: after the 80-byte side record */
 static struct ble_vm_info ble_vm_seen;
 static struct ble_rf_trims ble_trims;
-static volatile uint32_t ble_rx_count, ble_tx_count, ble_rx_lost;   /* (the host tests; INFO later) */
+static volatile uint32_t ble_rx_count, ble_tx_count, ble_rx_lost;   /* (BT CONNECTION's line, the host tests) */
+#define BLE_RT_AGE_MAX 120u                    /* ms: a realtime message's age within its packet, clamped */
+/* (1.2) what the last run left in the breadcrumb (hal/fm1_ble_rf.h), read once at boot: the step a radio start-up
+ * had reached when the FM-1 reset, or 0 when it had finished (RUNNING / SET_OFF) or there is none (a power cycle) */
+static uint8_t ble_hung_step;
+static uint8_t ble_crumb_hung(uint32_t w);
 
 BLE_API void ble_app_state(void)               /* the BLE interrupts, or the menu with them held */
 {
@@ -54,6 +62,10 @@ BLE_API void ble_app_state(void)               /* the BLE interrupts, or the men
 
 BLE_API int ble_app_midi_peek(uint32_t *pkt, uint32_t *t_ms)
 {
+    if (!ble_tx_on) {                           /* (1.2) SEND OFF: dropped here, by the ring's one consumer. 1.1 */
+        bmo_r = bmo_w;                          /* reset bmo_r from the main loop, which a BLE interrupt between */
+        return 0;                               /* its peek and its pop could push past bmo_w: garbage sent */
+    }
     if (bmo_r == bmo_w)
         return 0;
     RING_PUBLISH();                             /* the slot read after the index (the audio ISR fills it) */
@@ -68,14 +80,65 @@ BLE_API void ble_app_midi_pop(void)
     bmo_r++;
 }
 
+/* (1.2) a realtime message's time on our clock (fm1_ms), from Optimist 0.2's ble_in_time (io/midi/midi_ble.c, GPL-3.0,
+ * its BLE stack's own project), in ms: the sender's millisecond (ts, 13 bits; unwrapped into bin.s) plus the offset o
+ * of the least delayed message lately: o follows each earlier one at once and drifts up 1/4096 of the time since (the
+ * two clocks' drift). A sender whose times do not move (some send 0) or a gap of 4 s: o from this one (its arrival,
+ * less how much older than the packet's newest it is). Only BIN_LATE_N in a row more than BIN_LATE_MS late take o from
+ * the last one. So the connection interval's bunching (a few F8s arriving together every 7.5-45 ms) is taken out */
+#define BIN_LATE_MS 100u
+#define BIN_LATE_N 24u                          /* (a beat of F8s) */
+static struct {
+    uint32_t s, o, at;                          /* the sender's time unwrapped; the offset; our last arrival (ms) */
+    uint16_t ts;
+    uint8_t ok, late;
+} bin;
+static uint32_t ble_in_time(uint16_t ts, uint16_t last_ts)
+{
+    uint32_t now = fm1_ms, arr, t, rise;
+    uint32_t back = (uint32_t)(uint16_t)(last_ts - ts) & 0x1FFFu;   /* ms older than the packet's newest */
+    arr = now - back;
+    if (bin.ok && now - bin.at < 4000u)
+        bin.s += (uint32_t)(uint16_t)(ts - bin.ts) & 0x1FFFu;
+    else
+        bin.s = 0, bin.o = arr, bin.ok = 1;
+    rise = (now - bin.at) >> 12;
+    bin.ts = ts;
+    bin.at = now;
+    t = arr - bin.s;                            /* the offset this message gives */
+    if ((int32_t)(t - (bin.o + rise)) < 0)
+        bin.o = t;                              /* less delayed: the offset */
+    else
+        bin.o += rise;
+    t = bin.o + bin.s;
+    bin.late = (int32_t)(now - t) > (int32_t)BIN_LATE_MS ? (uint8_t)(bin.late + 1u) : 0u;
+    if (bin.late >= BIN_LATE_N || (int32_t)(t - now) > 0) {
+        bin.s = 0;                              /* late a beat long, or ahead of now: from this one */
+        bin.o = arr;
+        bin.late = 0;
+        t = arr;
+    }
+    return t;
+}
+
 BLE_API void ble_app_midi_in(uint32_t pkt, uint16_t ts, uint16_t last_ts)   /* the BLE interrupts */
 {
     uint32_t cin = pkt & 15u, st = (pkt >> 8) & 0xFFu;
-    (void)ts, (void)last_ts;
     if (!ble_on || !ble_rx_on)
         return;
-    if (cin < 8u || cin > 0xEu || (st >> 4) != cin)
-        return;                                 /* channel voice messages only (as usb.c midi_in_event checks them) */
+    if (cin == 0xFu && (st == 0xF8u || st == 0xFAu || st == 0xFBu || st == 0xFCu)) {
+        uint32_t age;
+        if (song.g[G_SYNC] != 3)
+            return;                             /* (SYNC not BT: a DAW's clock is not queued, notes keep the room) */
+        age = fm1_ms - ble_in_time(ts, last_ts);
+        if ((int32_t)age < 0)
+            age = 0;
+        if (age > BLE_RT_AGE_MAX)
+            age = BLE_RT_AGE_MAX;
+        pkt = 0x0Fu | st << 8 | age << 16;      /* clock / transport: seq.c mclk_event, SYNC = BT */
+    } else if (cin < 8u || cin > 0xEu || (st >> 4) != cin) {
+        return;                                 /* channel voice messages (as usb.c midi_in_event checks them) */
+    }
     if (bmi_w - bmi_r >= BMQ) {
         ble_rx_lost++;
         return;
@@ -268,6 +331,7 @@ static void ble_midi_init(void)                 /* at boot, before the interrupt
     }
 #if BLE_HW_WL82
     fm1_ble_crumb_boot();
+    ble_hung_step = ble_crumb_hung(fm1_ble_bc.prev);
     ble_hw_wl82_attach();                       /* the two vectors, masked: no BLE / RF register written */
 #endif
 }
@@ -277,14 +341,13 @@ static void ble_midi_set(uint8_t rx, uint8_t tx)
 {
     uint8_t on = (uint8_t)(rx || tx);
     ble_rx_on = rx;
-    ble_tx_on = tx;
-    if (!tx)
-        bmo_r = bmo_w;
+    ble_tx_on = tx;                             /* (SEND OFF: ble_app_midi_peek empties the out ring) */
     if (!rx)
         ble_release = 1;                        /* (receive OFF: what a central left on ends now) */
     if (on == ble_on)
         return;
     if (on && !ble_up) {
+        ble_hung_step = 0;                      /* (a new start: the last run's breadcrumb is old news) */
         BLE_STEP(SET_ON);
         if (!ble_radio_start())
             return;                             /* no stored calibration: the radio stays off */
@@ -303,6 +366,71 @@ static void ble_midi_set(uint8_t rx, uint8_t tx)
         BLE_STEP(RUNNING);
     else
         BLE_STEP(SET_OFF);
+}
+
+/* (1.2) the step a breadcrumb word names when the radio's start-up had not finished: the FM-1 reset (a watchdog
+ * reset, a crash) in the middle of it. 0: it finished (RUNNING), Bluetooth was turned off (SET_OFF), or no word */
+enum { BC_NONE, BC_SET_ON, BC_RF_INIT = 3, BC_BB_INIT, BC_RUNNING = 12, BC_SET_OFF };   /* (FM1_BLE_STEP_*: the host has no hal) */
+#if BLE_HW_WL82
+_Static_assert(FM1_BLE_STEP_RF_INIT == BC_RF_INIT && FM1_BLE_STEP_BB_INIT == BC_BB_INIT && FM1_BLE_STEP_RUNNING == BC_RUNNING &&
+                   FM1_BLE_STEP_SET_OFF == BC_SET_OFF, "breadcrumb steps");
+#endif
+static uint8_t ble_crumb_hung(uint32_t w)
+{
+    uint32_t step = (w >> 16) & 0xFFu;
+    if (w >> 24 != 0xB1u || step == BC_NONE || step == BC_RUNNING || step == BC_SET_OFF || step > BC_SET_OFF)
+        return 0;
+    return (uint8_t)step;
+}
+static const char *ble_step_name(uint32_t step)
+{
+    static const char *const N[] = {"", "SET ON", "STACK", "RF INIT", "BASEBAND", "STARTED", "ENABLE", "LINK STOP",
+                                    "LINK OPEN", "ADVERT", "ADVERT ON", "IRQS ON", "RUNNING", "SET OFF"};
+    return step < sizeof N / sizeof N[0] ? N[step] : "?";
+}
+
+/* (1.2) BT CONNECTION's line below its value (ui_menu.c): the radio step the last run was in when the FM-1 reset
+ * (a watchdog reset: a start-up, or a re-advertise after a disconnect, that never returned), else what went
+ * through the link this session (MIDI messages in / out, and any lost), else nothing */
+static const char *ble_link_sub(int *warn)
+{
+    static char b[28];
+    uint32_t n;
+    *warn = 0;
+    if (ble_hung_step && !ble_up) {
+        *warn = 1;
+        str_cpy(b, "RESET DURING: ", sizeof b);
+        str_cpy(b + str_len(b), ble_step_name(ble_hung_step), sizeof b - str_len(b));
+        return b;
+    }
+    if (!ble_up || (!ble_rx_count && !ble_tx_count && !ble_rx_lost))
+        return "";
+    str_cpy(b, "IN ", sizeof b);
+    fmt_int(b + str_len(b), (int32_t)(ble_rx_count % 100000u));
+    str_cpy(b + str_len(b), " OUT ", sizeof b - str_len(b));
+    fmt_int(b + str_len(b), (int32_t)(ble_tx_count % 100000u));
+    n = ble_rx_lost;
+    if (n) {
+        *warn = 1;
+        str_cpy(b + str_len(b), " LOST ", sizeof b - str_len(b));
+        fmt_int(b + str_len(b), (int32_t)(n % 10000u));
+    }
+    return b;
+}
+
+/* (1.2) what the menu redraws for (ui_menu.c draw_menu's signature): 1.1 left the link state and RADIO CAL's
+ * BACKING UP out of it, so a phone connecting did not change the screen until a knob moved. Counts at most
+ * twice a second */
+static uint32_t ble_menu_sig(void)
+{
+    static uint32_t t, cnt;
+    uint32_t s = (uint32_t)ble_on + 2u * (uint32_t)ble_connected() + 4u * (uint32_t)ble_midi_ready() +
+                 8u * (uint32_t)ble_rf_bak_owed + 32u * (uint32_t)ble_hung_step + 1024u * (uint32_t)ble_up;
+    if (fm1_ms - t >= 500u) {
+        t = fm1_ms;
+        cnt = ble_rx_count * 7u + ble_tx_count * 131u + ble_rx_lost * 8191u;
+    }
+    return s * 2654435761u + cnt;
 }
 
 /* RADIO CAL's value and its line below (ui_menu.c) */

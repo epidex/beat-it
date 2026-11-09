@@ -38,6 +38,7 @@ static uint8_t bt_rx, bt_tx;                       /* BLUETOOTH: receive / send 
 /* Beat It: Bluetooth LE MIDI (midi_ble.c). bt_ready: this unit's radio calibration was found, so the radio may start */
 static int bt_ready(void) { return ble_radio_ok(); }
 static const char *bt_link_name(void) { return ble_link_text(); }
+static uint32_t bt_sig(void) { return ble_menu_sig(); }   /* (1.2) the link's state redraws the menu */
 #define BT_NO_SHORT "NO RADIO CALIBRATION"       /* (this unit's stored radio calibration was not found) */
 #define BT_NO_MSG "NO RADIO CALIBRATION"
 static void bt_apply(void)
@@ -50,6 +51,7 @@ static void bt_apply(void)
 #else
 static int bt_ready(void) { return 0; }            /* a Bluetooth MIDI driver is running (none in SLOOP) */
 static const char *bt_link_name(void) { return "NO DRIVER"; }   /* the connection: a driver names the peer here */
+static uint32_t bt_sig(void) { return 0; }
 static void bt_apply(void) {}
 #define BT_NO_SHORT "NO BT DRIVER"
 #define BT_NO_MSG "NO BLUETOOTH DRIVER YET"
@@ -178,7 +180,7 @@ UI_SMALL static void draw_menu(void)
                    lights_notes * 32452843u + usb_full * 49979687u + usb_serial * 86028121u + usb_rate * 15486719u + theme_shown() * 32452867u + theme.crc + cpu1_off * 122949829u +
                    knob_accel_off * 179424673u + scope_view * 7u + scope_col * 5u * 7919u + drum_preview * 236887691u + step_adv_off * 373587883u + flt_reso * 512927357u +
                    (uint32_t)song.g[G_ROUTE] * 3u + (uint32_t)song.g[G_MIDI] * 101u + (uint32_t)song.g[G_SYNC] * 1031u +
-                   (uint32_t)song.g[G_CLKOUT] * 10037u + bt_rx * 100003u + bt_tx * 1000033u;
+                   (uint32_t)song.g[G_CLKOUT] * 10037u + bt_rx * 100003u + bt_tx * 1000033u + bt_sig();
     if (!ui.force && sig == ui.menu_sig)
         return;
     ui.menu_sig = sig;
@@ -264,7 +266,16 @@ UI_SMALL static void draw_menu(void)
                 cv_rect(4, y + 2, 4, MI_DY - 8, cur ? C_WHITE : TE_COL[r & 3u]);   /* the knob's colour */
                 xv = cv_text(14, y, &FONT_S, k, TE_COL[r & 3u]);
                 cv_text(xv + 6, y, &FONT_S, MI_NAME[i], cur ? C_WHITE : C_GRAY);
-                if (v[0] && text_w(&FONT_L, v) <= 222) {
+                const char *sub = "";
+                int sub_warn = 0;
+#if FELUCCA_BLE
+                if (i == MI_BTLINK)
+                    sub = ble_link_sub(&sub_warn);     /* (1.2) a hung start, or what went through the link */
+#endif
+                if (sub[0]) {                           /* the value small, the line under it */
+                    xv = cv_text(14, y + 16, &FONT_S, v, cur && vc == C_HI ? C_WHITE : vc);
+                    cv_text(14, y + 32, &FONT_S, sub, sub_warn ? C_AMB : C_DIM);
+                } else if (v[0] && text_w(&FONT_L, v) <= 222) {
                     xv = cv_text(14, y + 16, &FONT_L, v, cur && vc == C_HI ? C_WHITE : vc);
                 } else if (v[0]) {                      /* (too wide for the large type: WHITE KEYS) */
                     xv = cv_text(14, y + 24, &FONT_S, v, cur && vc == C_HI ? C_WHITE : vc);
@@ -290,6 +301,10 @@ UI_SMALL static void draw_menu(void)
 #endif
                 if (i == MI_MCLK && song.g[G_SYNC])
                     cv_text(xv + 8, y + 30, &FONT_S, "OFF WHILE SYNCED", C_AMB);
+#if FELUCCA_BLE
+                if (i == MI_MSYNC && song.g[G_SYNC] == 3 && !bt_rx)   /* (1.2) the clock from Bluetooth needs RECEIVE */
+                    cv_text(xv + 8, y + 30, &FONT_S, "BT RECEIVE IS OFF", C_AMB);
+#endif
                 if (i == MI_CPU1 && !mi_cpu1_have())
                     cv_text(xv + 8, y + 30, &FONT_S, "NOT RUNNING", C_AMB);   /* (cpu1.c: ABOUT says 1 CORE) */
             }

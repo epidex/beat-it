@@ -66,6 +66,8 @@ static const char *ble_link_text(void);
 static uint8_t ble_cpu1_stopped;           /* (midi_ble.c) the second core was stopped for the radio */
 static const char *ble_cal_text(void);       /* (midi_ble.c) RADIO CAL: STOCK / BACKUP / MISSING */
 static const char *ble_cal_sub(void);
+static const char *ble_link_sub(int *warn);   /* (midi_ble.c, 1.2) BT CONNECTION's line: a hung start, the counts */
+static uint32_t ble_menu_sig(void);          /* (midi_ble.c, 1.2) what the menu redraws for */
 #define BLE_RF_COPY_SIZE_ 100u
 static uint8_t ble_rf_bak[BLE_RF_COPY_SIZE_];   /* (midi_ble.c) the radio calibration backup, saved by project.c */
 static uint8_t ble_rf_bak_owed;

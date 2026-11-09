@@ -206,6 +206,8 @@ mkdir -p "$OUT/gen"
 EHC="cc -O1 -g -w -fsanitize=address,undefined -fno-sanitize=shift-base,signed-integer-overflow -fno-sanitize-recover=all -I$OUT/gen -Ibuild/gen -Ifirmware/src -Ifirmware/hal"
 $EHC -o "$OUT/beatit_rfcal_test" tests/beatit_rfcal_test.c -lm &&
     run "Beat It: the radio calibration backup (made from the stock VM, kept in both settings copies, used once the VM is gone)" "$OUT/beatit_rfcal_test"
+$EHC -o "$OUT/beatit_bt_screens" tests/beatit_bt_screens.c -lm &&
+    run "Beat It 1.2: the BLUETOOTH / MIDI menus of a Bluetooth build (a hung start, the counts, CLOCK IN = BT), rendered to $OUT/bt12-*.ppm" "$OUT/beatit_bt_screens" "$OUT"
 $EHC -o "$OUT/beatit_settings_test" tests/beatit_settings_test.c -lm &&
     run "Beat It: SCOPE VIEW / SCOPE COLOUR saved with the settings" "$OUT/beatit_settings_test"
 

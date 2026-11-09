@@ -10,6 +10,8 @@ tried over a real radio.
 
 ## Automatic builds
 
+The install steps, the first Bluetooth test and how to go back are in [docs/BEAT-IT-INSTALL.md](docs/BEAT-IT-INSTALL.md).
+
 Every push runs `.github/workflows/build.yml` on GitHub's Linux machines. When a run finishes, open it from the
 **Actions** tab and download **packages** under Artifacts. It holds:
 
@@ -17,7 +19,7 @@ Every push runs `.github/workflows/build.yml` on GitHub's Linux machines. When a
 - `Beat-It-X.Y.fwsc`: the firmware on its own, for SLOOP's Python installer or the Firmware Hub
 - `SHA256SUMS`
 
-Pushing a tag such as `v1.1` also puts those files on a release (the **Releases** page).
+Pushing a tag such as `v1.2` also puts those files on a release (the **Releases** page).
 
 The build step is `tools/ci_build_beatit.sh` (`build.sh`, then the installer page). The tests run on every build but
 do not stop it, because some SLOOP tests cover sounds Beat It removed and are expected to fail.

@@ -58,7 +58,13 @@ static const char *const N_ORDER[] = {"NOTE", "PLAY"};
 static const char *const N_CLICK[] = {"OFF", "REC", "ON"};   /* G_CLOCK is the metronome (seq.c click_tick) */
 static const char *const N_NOTE[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
 static const char *const N_DASH[] = {"--"};
+#if FELUCCA_BLE
+static const char *const N_SYNC[] = {"INT", "USB", "TRS", "BT"};   /* G_SYNC: the tempo and PLAY / STOP from (seq.c mclk);
+                                                                  * (Beat It 1.2) BT: Bluetooth MIDI (midi_ble.c) */
+#else
 static const char *const N_SYNC[] = {"INT", "USB", "TRS"};   /* G_SYNC: the tempo and PLAY / STOP from (seq.c mclk) */
+#endif
+#define SYNC_N ((uint32_t)(sizeof N_SYNC / sizeof N_SYNC[0]))
 static const char *const N_GO[] = {"--", "GO"};
 static const char *const N_SLCR[] = {"OFF", "GATE", "STUT"};             /* SL_OFF .. SL_STUT (slicer.c) */
 static const char *const N_SLDIV[] = {"1/8", "1/16", "1/32", "8T", "16T", "32T"};   /* SL_DEN */

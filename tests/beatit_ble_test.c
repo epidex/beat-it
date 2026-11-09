@@ -87,6 +87,7 @@ static void reset(void)
     bmi_w = bmi_r = bmo_w = bmo_r = 0;
     memset(ble_held, 0, sizeof ble_held);
     ble_release = 0;
+    memset(&bin, 0, sizeof bin);
     song.sel = 0;
     for (i = 0; i < NPART; i++) {
         host_preset(&trk[i], 0, 1);
@@ -309,6 +310,201 @@ static void t_cal_backup(void)
     ble_midi_init();
 }
 
+/* ---- (1.2) SYNC = BT: clock / START / STOP from Bluetooth, timed by the packets' own BLE-MIDI timestamps */
+static void t_clock_age(void)
+{
+    fm1_ms = 50000u;
+    reset();
+    ble_midi_set(1, 0);
+    song.g[G_SYNC] = 0;
+    WCMD(0x80, 0x80, 0xF8, 0x94, 0xF8);
+    check(bmi_w == 0u, "SYNC INT: a central's clock is not queued (notes keep the room)");
+    song.g[G_SYNC] = 3;
+    WCMD(0x80, 0x80, 0xF8, 0x94, 0xF8, 0x9E, 0xFA);   /* clock at 0 ms, clock at 20, START at 30 */
+    check(bmi_w == 3u && (ble_in_q[0] & 0xFFFFu) == 0xF82Fu && ble_in_q[0] >> 16 == 30u &&
+              ble_in_q[1] >> 16 == 10u && (ble_in_q[2] & 0xFFFFu) == 0xFA2Fu && ble_in_q[2] >> 16 == 0u,
+          "SYNC BT: clock / START queued as cable 2, each with its age in the packet (30, 10, 0 ms)");
+    reset();
+    ble_midi_set(1, 0);
+    song.g[G_SYNC] = 3;
+    WCMD(0x80, 0x80, 0xF8, 0xFF, 0xF8, 0xFE, 0xF8, 0xFD, 0xF8);   /* (0, 127, 254, 381 ms: lo wrapping bumps hi) */
+    check(bmi_w == 4u && ble_in_q[0] >> 16 == BLE_RT_AGE_MAX && ble_in_q[3] >> 16 == 0u,
+          "a pulse 381 ms older than the packet's newest: its age clamped to 120 ms");
+    reset();
+    ble_midi_set(0, 1);
+    song.g[G_SYNC] = 3;
+    WCMD(0x80, 0x80, 0xF8);
+    check(bmi_w == 0u, "SYNC BT with RECEIVE OFF: the clock is ignored");
+    ble_midi_set(0, 0);
+}
+
+/* a central's clock at a tempo: its pulses at exact times, carried in a packet at each connection event (every iv ms),
+ * each packet arriving 0..jit ms late (radio retries, the stack), each pulse stamped with its sender's millisecond.
+ * Returns the worst error (ms) of the time each pulse was given on our clock, after the first 2 s, in *err_new, and
+ * of its arrival time (what timing by arrival would give) in *err_arr */
+static uint32_t lcg = 12345u;
+static void bt_clock_run(uint32_t bpm10, uint32_t iv, uint32_t jit, uint32_t ms, int start, uint32_t *err_new, uint32_t *err_arr)
+{
+    uint32_t t0 = fm1_ms, pulse_us = 600000000u / (24u * bpm10), next_us = 0, ev, k = 0, en = 0, ea = 0;
+    int started = !start;
+    for (ev = iv; ev <= ms; ev += iv) {
+        uint8_t g[260];
+        uint32_t n = 3, first = 1, q0 = bmi_w, arrival, i;
+        uint32_t times[64], nt = 0;
+        lcg = lcg * 1103515245u + 12345u;
+        arrival = t0 + ev + (jit ? (lcg >> 16) % (jit + 1u) : 0u);
+        g[0] = 0x52, g[1] = 0x0E, g[2] = 0;
+        if (!started) {
+            uint32_t ts = (t0 + ev - 1u) & 0x1FFFu;
+            g[n++] = (uint8_t)(0x80u | ((ts >> 7) & 0x3Fu));
+            g[n++] = (uint8_t)(0x80u | (ts & 0x7Fu));
+            g[n++] = 0xFA;
+            first = 0;
+            started = 1;
+            next_us = (ev - 1u) * 1000u + 500u;
+            times[nt++] = t0 + ev - 1u;
+        }
+        while (next_us <= ev * 1000u && n < 250u && nt < 64u) {
+            uint32_t ts = (t0 + next_us / 1000u) & 0x1FFFu;
+            if (first) {
+                g[n++] = (uint8_t)(0x80u | ((ts >> 7) & 0x3Fu));
+                first = 0;
+            }
+            g[n++] = (uint8_t)(0x80u | (ts & 0x7Fu));
+            g[n++] = 0xF8;
+            times[nt++] = t0 + next_us / 1000u;
+            next_us += pulse_us;
+        }
+        fm1_ms = arrival;
+        if (n > 3u) {
+            ble_att_rx(g, (uint16_t)n);
+            for (i = 0; i < nt && q0 + i != bmi_w; i++) {
+                uint32_t est = arrival - (ble_in_q[(q0 + i) % BMQ] >> 16);
+                uint32_t e1 = est > times[i] ? est - times[i] : times[i] - est;
+                uint32_t e2 = arrival - times[i];
+                if (k++ >= 24u && ev >= 2000u) {   /* (after 2 s: the offset has its least delayed packet) */
+                    en = e1 > en ? e1 : en;
+                    ea = e2 > ea ? e2 : ea;
+                }
+            }
+        }
+        tick();
+    }
+    if (err_new)
+        *err_new = en;
+    if (err_arr)
+        *err_arr = ea;
+}
+
+static void t_clock_follow(void)
+{
+    uint32_t en, ea;
+    char m[160];
+    reset();
+    memset(&mclk, 0, sizeof mclk);
+    transport_req = 0;
+    song.playing = 0;
+    fm1_ms = 100000u;
+    ble_midi_set(1, 0);
+    song.g[G_SYNC] = 3;
+    song.g[G_BPM] = 100;
+    bt_clock_run(1200u, 15u, 10u, 6000u, 1, &en, &ea);   /* 120 BPM, a 15 ms connection interval, 0-10 ms late */
+    check(song.g[G_BPM] == 120, "SYNC BT: a central's clock at 120 BPM, 15 ms connection events, 0-10 ms late -> TEMPO 120");
+    check(song.playing || transport_req == 3u, "  and its START starts the sequencer");
+    snprintf(m, sizeof m, "  each pulse timed within %u ms of when it was sent (by arrival it would be up to %u ms off)",
+             (unsigned)en, (unsigned)ea);
+    check(en <= 2u && ea > 10u, m);
+    reset();
+    memset(&mclk, 0, sizeof mclk);
+    fm1_ms = 300000u;
+    ble_midi_set(1, 0);
+    song.g[G_SYNC] = 3;
+    song.g[G_BPM] = 100;
+    bt_clock_run(1330u, 45u, 20u, 8000u, 0, &en, &ea);    /* 133 BPM, 45 ms events: 2-3 pulses a packet */
+    snprintf(m, sizeof m, "  133 BPM, 45 ms events, 0-20 ms late -> TEMPO 133; pulses within %u ms (by arrival %u)",
+             (unsigned)en, (unsigned)ea);
+    check(song.g[G_BPM] == 133 && en <= 2u, m);
+    WCMD(0x80, 0x80, 0xFC);
+    tick();
+    check(transport_req == 2u, "  its STOP stops the sequencer");
+    song.g[G_SYNC] = 2;
+    memset(&mclk, 0, sizeof mclk);
+    song.g[G_BPM] = 90;
+    bt_clock_run(1200u, 15u, 0u, 3000u, 0, 0, 0);
+    check(song.g[G_BPM] == 90 && !mclk.alive && bmi_w == bmi_r, "SYNC TRS: Bluetooth's clock is not queued or followed");
+    song.g[G_SYNC] = 0;
+    ble_midi_set(0, 0);
+}
+
+/* ---- (1.2) SEND OFF empties the out ring in its one consumer (1.1 reset it from the main loop: a BLE interrupt's
+ * pop in between could leave bmo_r past bmo_w, and then the ring read as ~4 billion stale packets) */
+static void t_send_off_ring(void)
+{
+    uint32_t pkt, t;
+    reset();
+    ble_midi_set(0, 1);
+    ble_out_on = 1;
+    midi_out_event(0x09u | 0x90u << 8 | 60u << 16 | 100u << 24);
+    midi_out_event(0x09u | 0x90u << 8 | 62u << 16 | 100u << 24);
+    check(bmo_w - bmo_r == 2u, "two notes waiting for the next connection event");
+    ble_midi_set(0, 0);
+    check(bmo_w - bmo_r == 2u, "SEND OFF from the menu: the menu no longer touches the BLE interrupts' read index");
+    check(!ble_app_midi_peek(&pkt, &t) && bmo_r == bmo_w, "  the next BLE-side peek drops them: nothing sent, the ring empty");
+    ble_app_midi_pop();                         /* (a pop the BLE side had begun: harmless now) */
+    check(bmo_r == bmo_w + 1u || bmo_r == bmo_w, "  (a pop after it moves at most one)");
+    bmo_r = bmo_w;
+}
+
+/* ---- (1.2) BT CONNECTION's line: a start-up the last run did not finish (the breadcrumb a reset keeps), the counts */
+static void t_link_line(void)
+{
+    int warn;
+    const char *s;
+    check(ble_crumb_hung(0xB1000000u | BC_RF_INIT << 16 | 0x0307u) == BC_RF_INIT,
+          "breadcrumb: a reset in the radio's RF INIT is a hung start");
+    check(!ble_crumb_hung(0xB1000000u | BC_RUNNING << 16) && !ble_crumb_hung(0xB1000000u | BC_SET_OFF << 16) &&
+              !ble_crumb_hung(0) && !ble_crumb_hung(0x12345678u),
+          "  RUNNING, SET OFF, none (a power cycle) or noise: not a hung start");
+    reset();
+    ble_midi_set(0, 0);
+    ble_up = 0;
+    ble_rx_count = ble_tx_count = ble_rx_lost = 0;
+    ble_hung_step = BC_BB_INIT;
+    s = ble_link_sub(&warn);
+    check(!strcmp(s, "RESET DURING: BASEBAND") && warn, "a start that hung last time: BT CONNECTION says where (amber)");
+    ble_midi_set(1, 0);
+    check(ble_hung_step == 0, "  turning Bluetooth on again clears it (the new start writes its own breadcrumb)");
+    s = ble_link_sub(&warn);
+    check(!strcmp(s, "") && !warn, "  connected nothing yet: no line");
+    WCMD(0x80, 0x80, 0x90, 0x3C, 0x64);
+    tick();
+    s = ble_link_sub(&warn);
+    check(!strcmp(s, "IN 1 OUT 0") && !warn, "  a note in: IN 1 OUT 0");
+    ble_rx_lost = 3;
+    s = ble_link_sub(&warn);
+    check(!strcmp(s, "IN 1 OUT 0 LOST 3") && warn, "  messages lost (queue full) show in amber");
+    ble_rx_lost = 0;
+    ble_midi_set(0, 0);
+}
+
+static void t_menu_sig(void)
+{
+    uint32_t a, b;
+    reset();
+    ble_midi_set(1, 0);
+    a = ble_menu_sig();
+    ble_was_conn = 0;
+    b = ble_menu_sig();
+    check(a == b, "the menu's BT signature is steady while nothing changes (no redraw every frame)");
+    ble_rf_bak_owed = 2;
+    b = ble_menu_sig();
+    check(a != b, "  RADIO CAL BACKING UP -> BACKED UP changes it (1.1 waited for a knob)");
+    ble_rf_bak_owed = 0;
+    ble_midi_set(0, 0);
+    b = ble_menu_sig();
+    check(a != b, "  the radio's state changes it");
+}
+
 int main(void)
 {
     t_off_at_boot();
@@ -319,6 +515,11 @@ int main(void)
     t_name();
     t_no_cal();
     t_cal_backup();
+    t_clock_age();
+    t_clock_follow();
+    t_send_off_ring();
+    t_link_line();
+    t_menu_sig();
     printf("beatit_ble: %d failed\n", fails);
     return fails;
 }

@@ -3173,11 +3173,13 @@ static void mclk_tempo(uint32_t dt)
         song.g[G_BPM] = (int16_t)clamp((int32_t)((t10 + 5u) / 10u), 40, 240);
 }
 
-static void mclk_event(uint32_t st, uint32_t src)  /* a realtime message; src 1 USB, 2 TRS */
+static void mclk_event(uint32_t st, uint32_t src, uint32_t age)   /* a realtime message; src 1 USB, 2 TRS, 3 BT */
 {
-    uint32_t now = fm1_ms;
+    uint32_t now = fm1_ms - age;                   /* (Beat It 1.2) age: Bluetooth's own timestamp, ms before now */
     if (!song.g[G_SYNC] || src != (uint32_t)song.g[G_SYNC])
         return;
+    if (age && mclk.alive && (int32_t)(now - mclk.last_ms) < 0 && (int32_t)(now - mclk.last_ms) > -256)
+        now = mclk.last_ms;                        /* (a Bluetooth pulse never before the one before it) */
     if (st == 0xFAu || st == 0xFBu) {              /* START: from the top; CONTINUE: on from where it stopped */
         mclk.pos = mclk.done = 0;
         mclk.have = 0;
@@ -3439,8 +3441,9 @@ static void events_block(uint32_t n)
         uint32_t d1 = (pkt >> 16) & 0x7Fu, d2 = (pkt >> 24) & 0x7Fu;
         track_t *t;
         mi_r++;
-        if ((pkt & 15u) == 0xFu) {                    /* clock / transport: cable 0 USB, 1 TRS */
-            mclk_event((pkt >> 8) & 0xFFu, ((pkt >> 4) & 15u) ? 2u : 1u);
+        if ((pkt & 15u) == 0xFu) {                    /* clock / transport: cable 0 USB, 1 TRS, 2 BT (age in byte 2) */
+            uint32_t cable = (pkt >> 4) & 15u;
+            mclk_event((pkt >> 8) & 0xFFu, cable + 1u, cable == 2u ? (pkt >> 16) & 0xFFu : 0u);
             continue;
         }
         if (song.g[G_RMCH] && ch == (uint32_t)song.g[G_RMCH] - 1u && st == 0xB0u && d1 >= REMOTE_CC0 &&

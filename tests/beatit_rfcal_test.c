@@ -20,6 +20,8 @@ static const char *ble_link_text(void);
 static uint8_t ble_cpu1_stopped;
 static const char *ble_cal_text(void);
 static const char *ble_cal_sub(void);
+static const char *ble_link_sub(int *warn);
+static uint32_t ble_menu_sig(void);
 #define BLE_RF_COPY_SIZE_ 100u
 static uint8_t ble_rf_bak[BLE_RF_COPY_SIZE_];
 static uint8_t ble_rf_bak_owed;
