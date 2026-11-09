@@ -49,7 +49,9 @@ static const palette_t PALETTES[] = {
     {"CYAN", {RGB(0, 30, 50), RGB(0, 62, 96), RGB(16, 112, 160), RGB(56, 172, 222), RGB(140, 222, 255)}},
     {"RED", {RGB(52, 8, 8), RGB(100, 18, 14), RGB(170, 36, 26), RGB(226, 64, 48), RGB(255, 112, 92)}},
     {"MONO", {RGB(40, 40, 40), RGB(80, 80, 80), RGB(130, 130, 130), RGB(186, 186, 186), RGB(226, 226, 226)}},
+    {"PURPLE", {RGB(34, 10, 52), RGB(70, 24, 110), RGB(116, 50, 176), RGB(170, 96, 236), RGB(220, 170, 255)}},
 };
+#define PAL_PURPLE 5u                            /* (custom) purple on black: the tracks in purples too (palette_set) */
 #define NPALETTES (sizeof(PALETTES) / sizeof(PALETTES[0]))
 static uint16_t pal[5];
 #define C_LINE pal[0]                /* 1 rules, separators */
@@ -82,6 +84,7 @@ static uint8_t theme_valid, theme_on;
 static const uint16_t TE_COL_DEF[4] = {RGB(40, 124, 255), RGB(30, 204, 112), RGB(255, 198, 24), RGB(255, 98, 26)};
 static const uint16_t TE_MID_DEF[4] = {RGB(26, 82, 170), RGB(20, 136, 76), RGB(170, 132, 16), RGB(170, 66, 18)};
 static const uint16_t TE_DIM_DEF[4] = {RGB(14, 40, 86), RGB(10, 66, 38), RGB(86, 66, 8), RGB(86, 32, 8)};
+static const uint16_t TE_COL_PUR[4] = {RGB(168, 72, 255), RGB(236, 64, 210), RGB(120, 110, 255), RGB(255, 140, 236)};
 static uint16_t TE_COL[4] = {RGB(40, 124, 255), RGB(30, 204, 112), RGB(255, 198, 24), RGB(255, 98, 26)};
 static uint16_t TE_MID[4] = {RGB(26, 82, 170), RGB(20, 136, 76), RGB(170, 132, 16), RGB(170, 66, 18)};
 static uint16_t TE_DIM[4] = {RGB(14, 40, 86), RGB(10, 66, 38), RGB(86, 66, 8), RGB(86, 32, 8)};
@@ -173,9 +176,10 @@ static void palette_set(uint32_t i)              /* built-in palette i, or the t
     for (k = 0; k < 4u; k++)
         te_g[k] = te_gray(TE_G_DEF[k]);
     for (k = 0; k < 4u; k++) {
-        TE_COL[k] = cu ? theme.trk[k] : TE_COL_DEF[k];
-        TE_MID[k] = cu ? rgb565_scale(theme.trk[k], 2u, 3u) : TE_MID_DEF[k];
-        TE_DIM[k] = cu ? rgb565_scale(theme.trk[k], 1u, 3u) : TE_DIM_DEF[k];
+        int pur = !cu && i % NPALETTES == PAL_PURPLE;
+        TE_COL[k] = cu ? theme.trk[k] : pur ? TE_COL_PUR[k] : TE_COL_DEF[k];
+        TE_MID[k] = cu ? rgb565_scale(theme.trk[k], 2u, 3u) : pur ? rgb565_scale(TE_COL_PUR[k], 2u, 3u) : TE_MID_DEF[k];
+        TE_DIM[k] = cu ? rgb565_scale(theme.trk[k], 1u, 3u) : pur ? rgb565_scale(TE_COL_PUR[k], 1u, 3u) : TE_DIM_DEF[k];
     }
 }
 

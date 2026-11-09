@@ -1,0 +1,20 @@
+name: build
+# Builds the custom SLOOP on GitHub's Linux machines with the FM-1 Firmware Hub's shared workflow (zvenson/fm1-build):
+# every push and the "Run workflow" button leave the .fwsc as a download on the run's page (Artifacts);
+# a tag such as v2.7-purple1 also publishes it as a release.
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  workflow_dispatch:
+jobs:
+  build:
+    uses: zvenson/fm1-build/.github/workflows/build.yml@v1
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    with:
+      build: ./build.sh
+      packages: build/*.fwsc
+      test: sh tests/run_tests.sh

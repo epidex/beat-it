@@ -858,13 +858,13 @@ int main(int argc, char **argv)
             check(ok, "theme (2.7): checked (CRC, the strongest step and the accent standing out from the background, a "
                       "printable name); a first-beta THM1 taken with an accent");
             ui.menu = 1; ui.menu_sel = MI_COLOR; ui.force = 1; frame();
-            settings.palette = 4; theme_on = 0; palette_set(4);
-            encs[panel.enc[EN_K1]] = 1; frame();      /* no theme: MONO -> GREEN, as ever */
+            settings.palette = PAL_PURPLE; theme_on = 0; palette_set(PAL_PURPLE);
+            encs[panel.enc[EN_K1]] = 1; frame();      /* no theme: PURPLE (custom, the last built-in) -> GREEN */
             ok = settings.palette == 0u && !theme_on;
-            settings.palette = 4; palette_set(4);
+            settings.palette = PAL_PURPLE; palette_set(PAL_PURPLE);
             theme = th; theme_valid = 1;
-            encs[panel.enc[EN_K1]] = 1; frame();      /* MONO -> SUNSET */
-            ok &= theme_on && settings.palette == 4u && pal[0] == th.c[0] && pal[4] == th.c[4] && C_BLACK == th.bg &&
+            encs[panel.enc[EN_K1]] = 1; frame();      /* PURPLE -> SUNSET */
+            ok &= theme_on && settings.palette == PAL_PURPLE && pal[0] == th.c[0] && pal[4] == th.c[4] && C_BLACK == th.bg &&
                   TE_COL[0] == th.trk[0] && TE_COL[3] == th.trk[3] && TE_MID[1] == rgb565_scale(th.trk[1], 2, 3) &&
                   (lights_word() >> 30 & 1u) && !strcmp(mi_value(MI_COLOR, &(uint16_t){0}), "SUNSET") && C_WHITE == th.hi;
             ui.force = 1; frame(); ppm("menu-theme");
@@ -1153,8 +1153,37 @@ int main(int argc, char **argv)
         check(mi_sec(ui.menu_sel) == MS_AUDIO, "menu: SELECT right: AUDIO (LOWCUT, USB AUDIO, USB RATE)");
         encs[panel.enc[EN_SELECT]] = 5; frame();
         check(mi_sec(ui.menu_sel) == MS_SEQ, "menu (2.7.1): SELECT right: SEQ (STEP ADVANCE, DRUM PREVIEW)");
+        encs[panel.enc[EN_SELECT]] = 5; frame(); ui.force = 1; frame(); ppm("menu-midi");
+        check(mi_sec(ui.menu_sel) == MS_MIDI && ui.menu_sel == MI_MIN, "menu (custom): SELECT right: MIDI (IN, OUT, CLOCK IN, CLOCK OUT)");
+        {   /* the MIDI hub: the GLO settings themselves */
+            int16_t r0 = song.g[G_ROUTE], o0 = song.g[G_MIDI], y0 = song.g[G_SYNC], c0 = song.g[G_CLKOUT];
+            song.g[G_ROUTE] = 0; song.g[G_MIDI] = 0; song.g[G_SYNC] = 0; song.g[G_CLKOUT] = 0;
+            encs[panel.enc[EN_K1]] = 1; frame();
+            encs[panel.enc[EN_K2]] = 1; frame();
+            encs[panel.enc[EN_K3]] = 2; frame();
+            encs[panel.enc[EN_K4]] = 1; frame();
+            ui.force = 1; frame(); ppm("menu-midi-set");
+            check(song.g[G_ROUTE] == 1 && song.g[G_MIDI] == 1 && song.g[G_SYNC] == 1 && song.g[G_CLKOUT] == 1 &&
+                  !strcmp(mi_value(MI_MIN, &(uint16_t){0}), "CLOCK") && !strcmp(mi_value(MI_MOUT, &(uint16_t){0}), "SEQ") &&
+                  !strcmp(mi_value(MI_MSYNC, &(uint16_t){0}), "USB") && ui.menu_sel == MI_MCLK,
+                  "menu MIDI: KNOB 1..4 set GLO's MIDI IN, OUT, SYNC, CLOCK (a step a frame, the cursor follows)");
+            encs[panel.enc[EN_K3]] = 9; frame(); encs[panel.enc[EN_K3]] = 9; frame();
+            check(song.g[G_SYNC] == 2, "menu MIDI: CLOCK IN stops at TRS");
+            mi_set(MI_MOUT, 0);
+            check(song.g[G_MIDI] == 0, "menu MIDI: OCT+ steps round (OUT: SEQ -> KEYS)");
+            song.g[G_ROUTE] = r0; song.g[G_MIDI] = o0; song.g[G_SYNC] = y0; song.g[G_CLKOUT] = c0;
+        }
+        encs[panel.enc[EN_SELECT]] = 5; frame(); ui.force = 1; frame(); ppm("menu-bluetooth");
+        check(mi_sec(ui.menu_sel) == MS_BT && ui.menu_sel == MI_BTRX, "menu (custom): SELECT right: BLUETOOTH (RECEIVE, SEND, CONNECTION)");
+        encs[panel.enc[EN_K1]] = 1; frame();
+        encs[panel.enc[EN_K2]] = 1; frame(); ui.force = 1; frame(); ppm("menu-bluetooth-set");
+        check(bt_rx == 1u && bt_tx == 1u && ui.msg_t && !strcmp(ui.msg, "NO BLUETOOTH DRIVER YET") &&
+              !strcmp(mi_value(MI_BTLINK, &(uint16_t){0}), "NO DRIVER"),
+              "menu BLUETOOTH: RECEIVE / SEND kept, the screen says there is no driver yet");
+        bt_rx = bt_tx = 0;
         encs[panel.enc[EN_SELECT]] = 5; frame();
         encs[panel.enc[EN_SELECT]] = 5; frame();
+        ui.force = 1; frame(); ppm("menu-system");
         sec = mi_sec(ui.menu_sel);
         check(sec == MS_SYSTEM, "menu: SELECT stops at the last section, SYSTEM");
         encs[panel.enc[EN_K1]] = -1; frame();         /* (dualcore) row 1: 2ND CORE; the render split (fx.c cpu1_units) */
@@ -1469,6 +1498,40 @@ int main(int argc, char **argv)
             ppm(nm);
             snprintf(nm, sizeof nm, "visualiser %2u %-12s draws (%u px lit)", st + 1u, VIS_NAME[st], lit);
             check(lit > (st == 3u ? 400u : 1500u) && vis_style == st, nm);   /* (Lissajous: points) */
+            if (st == 0u) {                         /* (custom) KNOB 1: the scope's colours, SOUND last */
+                uint32_t q, okc = 1;
+                for (q = 1; q < SCOPE_NCOL; q++) {
+                    uint16_t want;
+                    encs[panel.enc[EN_K1]] = 1; frames(40);
+                    ui.force = 1; frames(2);
+                    want = scope_colour();
+                    for (lit = 0, x = 0; x < 240u * 240u; x++)
+                        lit += swap16(screen[x]) == want;
+                    snprintf(nm, sizeof nm, "vis-01-%s", SCOPE_COL_NAME[q] + 8);
+                    ppm(nm);
+                    printf("   scope %-16s rgb565 %04X, %u px\n", SCOPE_COL_NAME[q], want, lit);
+                    okc &= scope_col == q && lit > 300u;
+                }
+                check(okc, "visualiser (custom): KNOB 1 steps the scope's colour (PURPLE .. SOUND), drawn in it");
+                printf("   SOUND: bass %d mids %d treble %d (x16)\n", scope_e[0], scope_e[1], scope_e[2]);
+                check(scope_e[0] > 0 && scope_e[1] > 0 && scope_e[2] > 0, "visualiser (custom): SOUND follows bass, mids and treble");
+                {   /* the mapping: the part that leads shows (r, g, b of RGB565) */
+                    int32_t sv[3] = {scope_e[0], scope_e[1], scope_e[2]};
+                    uint16_t kick, hats, acid;
+                    scope_e[0] = 9000; scope_e[1] = 5000; scope_e[2] = 4000; kick = scope_mix();
+                    scope_e[0] = 4000; scope_e[1] = 5000; scope_e[2] = 9000; hats = scope_mix();
+                    scope_e[0] = 9000; scope_e[1] = 5000; scope_e[2] = 8800; acid = scope_mix();
+                    printf("   SOUND map: bass-led %04X, treble-led %04X, bass+treble %04X\n", kick, hats, acid);
+                    check((kick >> 11) > 28u && ((kick >> 5) & 63u) < 12u && (kick & 31u) < 4u &&
+                          (hats & 31u) > 28u && (hats >> 11) < 4u &&
+                          (acid >> 11) > 28u && (acid & 31u) > 24u && ((acid >> 5) & 63u) < 8u,
+                          "visualiser (custom): SOUND colours: bass red, treble blue, bass + treble magenta");
+                    scope_e[0] = sv[0]; scope_e[1] = sv[1]; scope_e[2] = sv[2];
+                }
+                encs[panel.enc[EN_K1]] = 1; frames(40);
+                check(scope_col == 0u, "visualiser (custom): KNOB 1 goes round to THEME");
+                ui.force = 1; frames(2);
+            }
             encs[panel.enc[EN_SELECT]] = 1; frame();
         }
         {   /* MASTER at 0: silence out, the picture as if MASTER were all the way up */

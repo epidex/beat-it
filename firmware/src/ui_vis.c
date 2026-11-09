@@ -206,6 +206,78 @@ static void vis_bands(int16_t *out)
     }
 }
 
+/* ---- the scope's colour (KNOB 1 on OSCILLOSCOPE) ----
+ * 0 THEME (track 1's colour: purple on the PURPLE palette), 1..6 fixed colours, 7 SOUND: the colour follows the
+ * energy of three parts of the spectrum (the 32 bands of vis_fft / vis_bands; the scope runs at 22.05 kHz, so a
+ * bin is 43 Hz): BASS (bands 0..4, up to ~260 Hz) red, MIDS (bands 5..22, ~260 Hz..2.1 kHz) green, TREBLE (bands
+ * 23..31, ~2.1..10 kHz) blue, each eased (quick up, slow down) and scaled so the strongest part is full
+ * brightness: a kick goes red, a bright distorted 303 adds blue (purple, magenta), hats push it blue.
+ * Not kept in the settings yet (the settings words have no free bits). */
+#define SCOPE_NCOL 8u
+static const char *const SCOPE_COL_NAME[SCOPE_NCOL] = {"COLOUR: THEME", "COLOUR: PURPLE", "COLOUR: MAGENTA",
+    "COLOUR: VIOLET", "COLOUR: CYAN", "COLOUR: GREEN", "COLOUR: WHITE", "COLOUR: SOUND"};
+static uint8_t scope_col;
+static int32_t scope_e[3];                          /* SOUND: bass, mids, treble, 0..1000 x 16 (eased) */
+static uint16_t scope_mix(void)
+{
+    int32_t k, m = 0, mn = 0x7fffffff, lo, den, c[3];
+    for (k = 0; k < 3; k++) {
+        if (scope_e[k] > m) m = scope_e[k];
+        if (scope_e[k] < mn) mn = scope_e[k];
+    }
+    if (m < 40 * 16)                                /* (near silence: a dim purple) */
+        return RGB(90, 40, 140);
+    /* (the band levels are in dB, so the three sit close: stretched from a little under the weakest to the
+     * strongest, then squared, so the part that leads shows; all three alike: a pale lavender) */
+    lo = mn - (m - mn) / 4;
+    den = m - lo;
+    if (den < 16 * 16)
+        return RGB(220, 200, 255);
+    for (k = 0; k < 3; k++) {
+        int32_t r = (scope_e[k] - lo) * 255 / den;
+        c[k] = r * r / 255;
+    }
+    return RGB(c[0], c[1], c[2]);
+}
+static uint16_t scope_colour(void)
+{
+    switch (scope_col) {
+    case 1: return RGB(160, 70, 255);
+    case 2: return RGB(240, 60, 220);
+    case 3: return RGB(110, 90, 255);
+    case 4: return RGB(0, 230, 255);
+    case 5: return RGB(60, 255, 90);
+    case 6: return RGB(255, 255, 255);
+    case 7: return scope_mix();
+    default: return TE_COL[0];
+    }
+}
+/* the glow beside the trace: the colour at half brightness (RGB565) */
+static uint16_t scope_dim(void) { return scope_col ? (uint16_t)((scope_colour() >> 1) & 0x7BEFu) : TE_DIM[0]; }
+/* SOUND: the three parts' mean band levels, eased (up: half the way a frame, down: an eighth) */
+static void scope_sound(void)
+{
+    static const uint8_t LO[3] = {0, 5, 23}, HI[3] = {5, 23, 32};
+    int16_t b[32];
+    int32_t k, i;
+    vis_fft();
+    vis_bands(b);
+    for (k = 0; k < 3; k++) {
+        int32_t sum = 0, t;
+        for (i = LO[k]; i < HI[k]; i++)
+            sum += b[i];
+        t = sum * 16 / (HI[k] - LO[k]);
+        scope_e[k] += (t - scope_e[k]) / (t > scope_e[k] ? 2 : 8);
+    }
+}
+/* KNOB 1 on OSCILLOSCOPE: the next / previous colour (round), its name a second */
+static void scope_col_turn(int32_t s)
+{
+    scope_col = (uint8_t)((scope_col + (s > 0 ? 1u : SCOPE_NCOL - 1u)) % SCOPE_NCOL);
+    ui_message(SCOPE_COL_NAME[scope_col]);
+    ui.force = 1;
+}
+
 static void vis_update(void)
 {
     uint32_t i, w, hit, now = fm1_ms;
@@ -269,6 +341,10 @@ static void vis_update(void)
         vs.scale += (target - vs.scale) / 5;
     }
     switch (vis_style) {
+    case 0:
+        if (scope_col == 7u)
+            scope_sound();
+        break;
     case 1: case 2: {
         int16_t b[32];
         vis_fft();
@@ -342,6 +418,7 @@ static void vis_scope(void)
 {
     uint32_t i0 = 0, i;
     int32_t py = 0;
+    uint16_t col = scope_colour(), dim = scope_dim();
     for (i = 1; i + 240u < VIS_FFT; i++)            /* a rising zero crossing: the wave stands still */
         if (vis_l[i - 1u] < 0 && vis_l[i] >= 0) {
             i0 = i;
@@ -354,9 +431,9 @@ static void vis_scope(void)
         int32_t y = 120 - vis_l[i0 + i] * 100 / (vs.scale ? vs.scale : 1);
         y = clamp(y, 2, 237);
         if (i) {
-            cv_line((int32_t)i - 1, py - 1, (int32_t)i, y - 1, TE_DIM[0]);
-            cv_line((int32_t)i - 1, py + 2, (int32_t)i, y + 2, TE_DIM[0]);
-            vis_thick((int32_t)i - 1, py, (int32_t)i, y, TE_COL[0]);
+            cv_line((int32_t)i - 1, py - 1, (int32_t)i, y - 1, dim);
+            cv_line((int32_t)i - 1, py + 2, (int32_t)i, y + 2, dim);
+            vis_thick((int32_t)i - 1, py, (int32_t)i, y, col);
         }
         py = y;
     }

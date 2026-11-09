@@ -11,15 +11,29 @@ enum { MI_COLOR, MI_ZOOM, MI_ACCEL, MI_LIGHTS, MI_KEYS, MI_NOTES, MI_LOWCUT, MI_
 #if FELUCCA_CDC
        MI_SERIAL,
 #endif
-       MI_RATE, MI_FRESO, MI_ADV, MI_DPREV, MI_CPU1, MI_PANEL, MI_LCLEAR, MI_ABOUT, MI_COUNT };
+       MI_RATE, MI_FRESO, MI_ADV, MI_DPREV, MI_MIN, MI_MOUT, MI_MSYNC, MI_MCLK, MI_BTRX, MI_BTTX, MI_BTLINK,
+       MI_CPU1, MI_PANEL, MI_LCLEAR, MI_ABOUT, MI_COUNT };
 static const char *const MI_NAME[MI_COUNT] = {"COLOR", "ZOOM", "KNOB ACCEL", "LIGHTS", "KEYS", "NOTES", "SPEAKER LOWCUT", "USB AUDIO",
 #if FELUCCA_CDC
                                               "USB SERIAL",
 #endif
-                                              "USB RATE", "FILTER RESO", "STEP ADVANCE", "DRUM PREVIEW", "2ND CORE", "HARDWARE CALIBRATION", "MIDI LEARN CLEAR", "ABOUT"};
-enum { MS_SCREEN, MS_LIGHTS, MS_AUDIO, MS_SEQ, MS_SYSTEM, MS_COUNT };   /* (2.7.1: SEQ) */
-static const char *const MS_NAME[MS_COUNT] = {"SCREEN", "LIGHTS", "AUDIO", "SEQ", "SYSTEM"};   /* (AUDIO: and USB) */
-static const uint8_t MS_FIRST[MS_COUNT + 1] = {MI_COLOR, MI_LIGHTS, MI_LOWCUT, MI_ADV, MI_CPU1, MI_COUNT};   /* rows of each */
+                                              "USB RATE", "FILTER RESO", "STEP ADVANCE", "DRUM PREVIEW",
+                                              "MIDI IN", "MIDI OUT", "CLOCK IN (SYNC)", "CLOCK OUT",
+                                              "BT MIDI RECEIVE", "BT MIDI SEND", "BT CONNECTION", "2ND CORE", "HARDWARE CALIBRATION", "MIDI LEARN CLEAR", "ABOUT"};
+/* (custom) the MIDI hub: MIDI (IN, OUT, clock in and out: the GLO > MIDI 2 / SYSTEM / MIDI 3 settings in one place)
+ * and BLUETOOTH (receive, send, the connection). SLOOP has no Bluetooth driver: bt_ready() says so and the
+ * BLUETOOTH rows only show it, until a driver fills in the bt_* hooks */
+enum { MS_SCREEN, MS_LIGHTS, MS_AUDIO, MS_SEQ, MS_MIDI, MS_BT, MS_SYSTEM, MS_COUNT };   /* (2.7.1: SEQ) */
+static const char *const MS_NAME[MS_COUNT] = {"SCREEN", "LIGHTS", "AUDIO", "SEQ", "MIDI", "BLUETOOTH", "SYSTEM"};
+static const uint8_t MS_FIRST[MS_COUNT + 1] = {MI_COLOR, MI_LIGHTS, MI_LOWCUT, MI_ADV, MI_MIN, MI_BTRX, MI_CPU1, MI_COUNT};
+static uint8_t bt_rx, bt_tx;                       /* BLUETOOTH: receive / send wanted (kept for a driver; no effect yet) */
+static int bt_ready(void) { return 0; }            /* a Bluetooth MIDI driver is running (none in SLOOP) */
+static const char *bt_link_name(void) { return "NO DRIVER"; }   /* the connection: a driver names the peer here */
+/* a MIDI hub row's global setting (song.g: the FM-1's settings, kept as the GLO pages keep them) */
+UI_SMALL static int32_t mi_g(uint32_t i)
+{
+    return i == MI_MIN ? G_ROUTE : i == MI_MOUT ? G_MIDI : i == MI_MSYNC ? G_SYNC : i == MI_MCLK ? G_CLKOUT : -1;
+}
 
 UI_SMALL static int mi_cpu1_have(void)                      /* the second core is running (cpu1.c; the host tests have no cpu1.c) */
 {
@@ -88,6 +102,19 @@ UI_SMALL static const char *mi_value(uint32_t i, uint16_t *c)
     case MI_CPU1:                                     /* the render on both cores (fx.c); live, the sound is the same */
         *c = mi_cpu1_have() ? C_HI : C_DIM;
         return cpu1_off ? "OFF" : "ON";
+    case MI_MIN: case MI_MOUT: case MI_MSYNC: case MI_MCLK: {   /* (custom) the MIDI hub: as GLO shows it */
+        int32_t g = mi_g(i);
+        if (i == MI_MCLK && song.g[G_SYNC])
+            *c = C_DIM;                               /* (seq.c: no clock out while following one) */
+        return GP[g].names[clamp(song.g[g], GP[g].min, GP[g].max)];
+    }
+    case MI_BTRX: case MI_BTTX:
+        if (!bt_ready())
+            *c = C_DIM;
+        return (i == MI_BTRX ? bt_rx : bt_tx) ? "ON" : "OFF";
+    case MI_BTLINK:
+        *c = bt_ready() ? C_HI : C_DIM;
+        return bt_link_name();
     case MI_LCLEAR: {                                 /* (2.6) the CCs MIDI LEARN holds; OCT+ clears them */
         static char b[8];
         uint32_t n = ml_count();
@@ -111,7 +138,9 @@ UI_SMALL static void draw_menu(void)
     uint32_t sig = ui.menu * 7u + ui.menu_sel * 131u + settings.palette * 1009u + settings.lowcut * 7919u +
                    settings.zoom * 104729u + lights_lvl * 1299709u + lights_keys * 15485863u + ml_count() * 2654435u +
                    lights_notes * 32452843u + usb_full * 49979687u + usb_serial * 86028121u + usb_rate * 15486719u + theme_shown() * 32452867u + theme.crc + cpu1_off * 122949829u +
-                   knob_accel_off * 179424673u + drum_preview * 236887691u + step_adv_off * 373587883u + flt_reso * 512927357u;
+                   knob_accel_off * 179424673u + drum_preview * 236887691u + step_adv_off * 373587883u + flt_reso * 512927357u +
+                   (uint32_t)song.g[G_ROUTE] * 3u + (uint32_t)song.g[G_MIDI] * 101u + (uint32_t)song.g[G_SYNC] * 1031u +
+                   (uint32_t)song.g[G_CLKOUT] * 10037u + bt_rx * 100003u + bt_tx * 1000033u;
     if (!ui.force && sig == ui.menu_sig)
         return;
     ui.menu_sig = sig;
@@ -162,8 +191,26 @@ UI_SMALL static void draw_menu(void)
             cv_text(4, 198, &FONT_S, "VOICE: REF. KLATTSCH (MIT)", C_DIM);
         } else {
             int32_t x = 4;
-            for (i = 0; i < MS_COUNT; i++) {        /* the sections as tabs: this one lit */
+            uint32_t s0 = 0, q;
+            for (;;) {                              /* (custom: seven sections, more than the row holds: the tabs
+                                                     * start where this one still fits, a "<" for those before) */
+                int32_t e = s0 ? 14 : 4;
+                for (q = s0; q <= sec; q++)
+                    e += text_w(&FONT_S, MS_NAME[q]) + 6;
+                if (e - 6 <= 236 || s0 >= sec)
+                    break;
+                s0++;
+            }
+            if (s0) {
+                cv_text(1, 4, &FONT_S, "<", C_DIM);
+                x = 14;
+            }
+            for (i = s0; i < MS_COUNT; i++) {       /* the sections as tabs: this one lit */
                 int32_t w = text_w(&FONT_S, MS_NAME[i]);
+                if (x + w > 236) {                  /* (no room: a ">" for the rest) */
+                    cv_text(230, 4, &FONT_S, ">", C_DIM);
+                    break;
+                }
                 if (i == sec)
                     cv_rect(x - 2, 3, w + 4, 18, C_LINE);
                 cv_text(x, 4, &FONT_S, MS_NAME[i], i == sec ? C_WHITE : C_DIM);
@@ -197,6 +244,10 @@ UI_SMALL static void draw_menu(void)
                 if (i == MI_SERIAL && usb_serial != usb_cdc_now())
                     cv_text(xv + 8, y + 30, &FONT_S, "RESTART", C_AMB);   /* (usb.c: at the next start) */
 #endif
+                if ((i == MI_BTRX || i == MI_BTTX) && !bt_ready())
+                    cv_text(xv + 8, y + 30, &FONT_S, "NO BT DRIVER", C_AMB);
+                if (i == MI_MCLK && song.g[G_SYNC])
+                    cv_text(xv + 8, y + 30, &FONT_S, "OFF WHILE SYNCED", C_AMB);
                 if (i == MI_CPU1 && !mi_cpu1_have())
                     cv_text(xv + 8, y + 30, &FONT_S, "NOT RUNNING", C_AMB);   /* (cpu1.c: ABOUT says 1 CORE) */
             }
@@ -309,6 +360,24 @@ UI_SMALL static void mi_set(uint32_t i, int32_t s)
             lights_lvl = LIGHTS_LOW;                   /* keys lit need a level: the lowest */
         break;
     }
+    case MI_MIN: case MI_MOUT: case MI_MSYNC: case MI_MCLK: {   /* (custom) the knob steps (stops at the ends),
+                                                        * OCT+ round: the same setting as on its GLO page */
+        int32_t g = mi_g(i), v = song.g[g];
+        v = s ? clamp(v + (s > 0 ? 1 : -1), GP[g].min, GP[g].max) : v >= GP[g].max ? GP[g].min : v + 1;
+        song.g[g] = (int16_t)v;
+        break;
+    }
+    case MI_BTRX: case MI_BTTX: {                      /* right ON, left OFF; OCT+ toggles (wanted: a driver takes it) */
+        uint8_t *v = i == MI_BTRX ? &bt_rx : &bt_tx;
+        *v = (uint8_t)(s > 0 ? 1u : s < 0 ? 0u : !*v);
+        if (!bt_ready())
+            ui_message("NO BLUETOOTH DRIVER YET");
+        break;
+    }
+    case MI_BTLINK:                                    /* OCT+: pair / connect (a driver's job) */
+        if (!s && !bt_ready())
+            ui_message("NO BLUETOOTH DRIVER YET");
+        break;
     case MI_LCLEAR:                                    /* (2.6) every learned CC: OCT+ */
         if (!s)
             ui_message(ml_clear_all() ? "LEARN CLEARED" : "NOTHING LEARNED");

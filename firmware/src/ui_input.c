@@ -1282,7 +1282,9 @@ UI_SMALL static void ui_input(void)
                                                          * screen's, out of sight) do nothing */
         if ((s = panel_enc(EN_SELECT)) != 0)
             vis_select(s);
-        for (k = 0; k < 4u; k++)
+        if ((s = panel_enc(EN_K1)) != 0 && vis_style % VIS_N == 0u)
+            scope_col_turn(s);                          /* OSCILLOSCOPE: KNOB 1 the trace's colour (ui_vis.c) */
+        for (k = 1; k < 4u; k++)
             panel_enc(EN_K1 + k);
     }
     if ((s = panel_enc(EN_SELECT)) != 0 && (rec_wait || ft_on || !page_walk(s))) {   /* SELECT: the pages of the
