@@ -163,6 +163,10 @@ static volatile uint8_t midi_in_lost;               /* (2.8.3) a note message di
                                                      * (a lost note-off must not leave a note stuck; after Melodee 1.5) */
 static void midi_out_event(uint32_t pkt)            /* from the audio ISR */
 {
+#if FELUCCA_BLE && !FELUCCA_LOADER
+    if ((pkt & 15u) >= 8u && (pkt & 15u) <= 0xEu)
+        ble_midi_out(pkt);                          /* (Beat It) channel messages to Bluetooth too, with BT MIDI SEND */
+#endif
     if (usb.config && mo_w - mo_r < MQ) {
         midi_out_q[mo_w % MQ] = pkt;
         RING_PUBLISH();

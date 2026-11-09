@@ -99,8 +99,12 @@ void fm1_timer5_irq(void)
         t5_nested_ticks += fm1_ticks() - t0;
         return;
     }
-    if (owed & 1u)
+    if (owed & 1u) {
         usb_poll();
+#if FELUCCA_BLE
+        ble_midi_poll();                        /* (Beat It) what Bluetooth received, into the same MIDI ring */
+#endif
+    }
 #if FELUCCA_UART
     if (owed & 2u)
         uart_midi_poll();
@@ -242,6 +246,9 @@ UI_SMALL static void fm1_main(void)
     usb_start();
 #if FELUCCA_UART
     uart_midi_init();
+#endif
+#if FELUCCA_BLE
+    ble_midi_init();                                    /* (Beat It) the stored radio calibration read; radio OFF */
 #endif
     timer5_start();
     fm1_guard_lock_top();

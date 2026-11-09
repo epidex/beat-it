@@ -47,6 +47,30 @@
 #ifndef FELUCCA_UAC_TONE
 #define FELUCCA_UAC_TONE 0       /* bench: the USB input sends test triangles instead of the music */
 #endif
+#ifndef FELUCCA_BLE
+#define FELUCCA_BLE 1            /* Beat It: Bluetooth LE MIDI (midi_ble.c, Optimist's open BLE stack in ble/) */
+#endif
+#if FELUCCA_BLE
+/* (ble/ble_stack.c picks the FM-1 radio driver, ble/ble_hw_wl82.c; host tests: FELUCCA_BLE_STUB) */
+#define BLE_API static
+#ifndef BLE_DEVICE_NAME
+#define BLE_DEVICE_NAME "BEAT IT"
+#define BLE_NAME_SEP " "
+#endif
+static void ble_midi_out(uint32_t pkt);      /* (midi_ble.c, after the flash driver) */
+static void ble_midi_poll(void);
+static void ble_midi_init(void);
+static void ble_midi_set(uint8_t rx, uint8_t tx);
+static int ble_radio_ok(void);
+static const char *ble_link_text(void);
+static uint8_t ble_cpu1_stopped;           /* (midi_ble.c) the second core was stopped for the radio */
+static const char *ble_cal_text(void);       /* (midi_ble.c) RADIO CAL: STOCK / BACKUP / MISSING */
+static const char *ble_cal_sub(void);
+#define BLE_RF_COPY_SIZE_ 100u
+static uint8_t ble_rf_bak[BLE_RF_COPY_SIZE_];   /* (midi_ble.c) the radio calibration backup, saved by project.c */
+static uint8_t ble_rf_bak_owed;
+static int ble_rf_copy_ok(const uint8_t *copy);
+#endif
 #include "usb.c"
 #ifndef FELUCCA_UART
 #define FELUCCA_UART 1           /* TRS MIDI IN on UART1 (3.5 mm jack) */
@@ -199,4 +223,7 @@ static void ota_commit(const uint8_t *parm)
 #include "recovery.c"        /* early, polled USB updater; no synth or settings */
 #endif
 #include "splash.c"          /* SLOOP boot logo (build/gen/sloop_logo.h) */
+#if FELUCCA_BLE
+#include "midi_ble.c"        /* Bluetooth LE MIDI (Beat It) */
+#endif
 #include "main.c"

@@ -960,6 +960,19 @@ UI_SMALL static int settings_write(const persist_t *p)
     side_fill(&side_out);
     st_side = &side_out;
     st_side_len = sizeof side_out;
+#if FELUCCA_BLE
+    _Static_assert(sizeof(side_rec_t) + BLE_RF_COPY_SIZE_ <= ST_SIDE_MAX, "the side record and the radio cal backup");
+    {   /* (Beat It) this unit's radio calibration backup right after the side record (midi_ble.c): with every save,
+         * so both copies carry it; only a valid one (made from this unit's own complete VM), never anything else */
+        static uint8_t side_rf[sizeof(side_rec_t) + BLE_RF_COPY_SIZE_];
+        memcpy(side_rf, &side_out, sizeof side_out);
+        st_side = side_rf;
+        if (ble_rf_copy_ok(ble_rf_bak)) {
+            memcpy(side_rf + sizeof side_out, ble_rf_bak, BLE_RF_COPY_SIZE_);
+            st_side_len = sizeof side_rf;
+        }
+    }
+#endif
     rc = st_save3(OBJ_SETTINGS, p, sizeof *p, &dsu, sizeof dsu, mp, midi_part_default(mp) ? 0u : sizeof mp);
     st_side = 0;
     if (rc)
@@ -1015,11 +1028,20 @@ UI_SMALL static void settings_save(void)
     {
         uint8_t mp[MIDI_PART];
         midi_part_fill(mp);
-        if (!memcmp(&p, &persist_saved, sizeof p) && !memcmp(mp, midi_saved, sizeof mp) && !fav_dirty)
+        if (!memcmp(&p, &persist_saved, sizeof p) && !memcmp(mp, midi_saved, sizeof mp) && !fav_dirty
+#if FELUCCA_BLE
+            && !ble_rf_bak_owed                    /* (Beat It) the radio calibration backup still to be written */
+#endif
+        )
             return;                                /* unchanged: no erase cycle */
     }
-    if (settings_write(&p) == 0)
+    if (settings_write(&p) == 0) {
         persist_saved = p;
+#if FELUCCA_BLE
+        if (ble_rf_bak_owed && --ble_rf_bak_owed)
+            settings_later = 1;                    /* the other copy (A / B) gets it with the next save */
+#endif
+    }
 #endif
 }
 

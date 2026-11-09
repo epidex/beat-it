@@ -17,7 +17,8 @@
 #include "fm1_time.h"
 #include "fm1_sys.h"
 /* the loader may write the app area and erase update records; never the head */
-#define FL_RANGE_OK(off, n) (FL_IN(off, n, 0x4000u, 0x93000u) || FL_IN(off, n, 0x93000u, 0xFC000u))
+/* (Beat It: never the stock SDK's VM / BTIF / USR sectors 0xE7000..0xFBFFF, where this unit's radio calibration is) */
+#define FL_RANGE_OK(off, n) ((FL_IN(off, n, 0x4000u, 0x93000u) || FL_IN(off, n, 0x93000u, 0xE7000u)))
 #include "fm1_flash.h"
 #include "../src/libc.c"
 #include "../src/usb.c"

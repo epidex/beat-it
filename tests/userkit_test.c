@@ -83,9 +83,14 @@ int main(void)
           !strcmp(DRUM_KIT_NAMES[DRUM_PAIR], "USR3+4") && DRUM_PAIR == DRUM_SYN - 1u && !strcmp(DRUM_KIT_NAMES[DRUM_SAMPLED], "808"),
           "KIT: USR1..USR4, USR3+4 after the synthesised kits (the old kit numbers kept)");
     check(SMP_USER_OFF(0u) == 0xA0000u && SMP_USER_OFF(2u) == 0xC8000u && SMP_USER_OFF(3u) == 0xE7000u &&
-          FL_STORE_OK(0xE7000u, 0x14000u) && !FL_STORE_OK(0xE7000u, 0x14001u) && !FL_STORE_OK(0xFB000u, 0x1000u) &&
           SMP_USER_OFF(3u) >= FL_FM6_HI && SMP_USER_OFF(3u) + SMP_USER_SIZE <= FL_GLOB_LO && !strcmp(SMP_ALL_NAMES[SMP_NSETS + 3u], "USR4"),
-          "USR4: 0xE7000..0xFAFFF, after the FM6 bank, before the settings; the store may write it, not past it");
+          "USR4: 0xE7000..0xFAFFF, after the FM6 bank, before the settings");
+    /* (Beat It) the stock SDK area under USR4 (the VM at 0xE8000 holds this unit's radio calibration) is never written */
+    check(!FL_STORE_OK(0xE7000u, 0x14000u) && !FL_STORE_OK(0xE8000u, 0x1000u) && !FL_STORE_OK(0xE7000u, 0x1000u) &&
+          !FL_STORE_OK(0xFB000u, 0x1000u) && !FL_STORE_OK(0xE6000u, 0x2000u) && !FL_STORE_OK(0xFF000u, 0x1000u) &&
+          FL_STORE_OK(SMP_USER_OFF(0u), 0x1000u) && FL_STORE_OK(SMP_USER_OFF(2u), 0x1000u) && FL_STORE_OK(0xE5000u, 0x2000u) &&
+          FL_STORE_OK(0xFC000u, 0x3000u),
+          "Beat It: USR4 / the stock VM 0xE7000..0xFBFFF and key_mac refused; USR1..3, the FM6 bank, the settings allowed");
 
     TDRUM->p[P_E0] = (int16_t)DRUM_USR;                  /* USR1 */
     quiet();

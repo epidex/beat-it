@@ -70,8 +70,13 @@ static uint32_t scope_w;
 #define FL_USR4_LO 0x000E7000u
 #define FL_USR4_HI 0x000FB000u
 #define FL_IN(off, n, lo, hi) ((uint32_t)(off) >= (lo) && (uint32_t)(off) <= (hi) && (uint32_t)(n) <= (hi) - (uint32_t)(off))
-#define FL_STORE_OK(off, n) (FL_IN(off, n, FL_DATA_LO, FL_DATA_HI) || FL_IN(off, n, FL_GLOB_LO, FL_GLOB_HI) || \
-                             FL_IN(off, n, FL_FM6_LO, FL_FM6_HI) || FL_IN(off, n, FL_USR4_LO, FL_USR4_HI))
+/* (Beat It, as hal/fm1_flash.h: the stock SDK area 0xE7000..0xFBFFF, the radio calibration's VM at 0xE8000 in it,
+ * and key_mac 0xFF000.. are never written, so USR4 cannot be stored) */
+#define FL_HITS(off, n, lo, hi) ((uint32_t)(off) < (hi) && ((uint32_t)(n) > (lo) || (uint32_t)(off) > (lo) - (uint32_t)(n)))
+#define FL_NEVER(off, n) (FL_HITS(off, n, 0x000E7000u, 0x000FC000u) || FL_HITS(off, n, 0x000FF000u, 0xFFFFFFFFu))
+#define FL_STORE_OK(off, n) (!FL_NEVER(off, n) && \
+                             (FL_IN(off, n, FL_DATA_LO, FL_DATA_HI) || FL_IN(off, n, FL_GLOB_LO, FL_GLOB_HI) || \
+                              FL_IN(off, n, FL_FM6_LO, FL_FM6_HI)))
 #define FL_RANGE_OK(off, n) (FL_STORE_OK(off, n) || FL_IN(off, n, FL_OTA_LO, FL_OTA_HI))
 #define FL_FAR(fn) fn
 static uint32_t fl_erases, fl_progs, fl_bad;          /* counters; fl_bad: a refused (out of range) access */

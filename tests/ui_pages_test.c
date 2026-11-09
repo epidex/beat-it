@@ -1220,9 +1220,9 @@ int main(int argc, char **argv)
         check(mi_sec(ui.menu_sel) == MS_BT && ui.menu_sel == MI_BTRX, "menu (custom): SELECT right: BLUETOOTH (RECEIVE, SEND, CONNECTION)");
         encs[panel.enc[EN_K1]] = 1; frame();
         encs[panel.enc[EN_K2]] = 1; frame(); ui.force = 1; frame(); ppm("menu-bluetooth-set");
-        check(bt_rx == 1u && bt_tx == 1u && ui.msg_t && !strcmp(ui.msg, "NO BLUETOOTH DRIVER YET") &&
+        check(bt_rx == 0u && bt_tx == 0u && ui.msg_t && !strcmp(ui.msg, "NO BLUETOOTH DRIVER YET") &&
               !strcmp(mi_value(MI_BTLINK, &(uint16_t){0}), "NO DRIVER"),
-              "menu BLUETOOTH: RECEIVE / SEND kept, the screen says there is no driver yet");
+              "menu BLUETOOTH (a build without the driver): RECEIVE / SEND stay OFF, the screen says why");
         bt_rx = bt_tx = 0;
         encs[panel.enc[EN_SELECT]] = 5; frame();
         encs[panel.enc[EN_SELECT]] = 5; frame();

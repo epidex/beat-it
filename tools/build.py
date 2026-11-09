@@ -113,6 +113,12 @@ def generate():
             failed.append(c[0].name)
     if failed:
         raise SystemExit(f"build: {', '.join(failed)} failed")
+    # Beat It: Bluetooth. The radio start-up values (Apache-2.0 vendor data captured by Optimist from M-VAVE's
+    # stock V15, firmware/hal/ble_rf_tables_v15.h) as build/gen/ble_rf_tables.h (hal/fm1_ble_rf.h includes it)
+    src = SRC / "firmware" / "hal" / "ble_rf_tables_v15.h"
+    dst = GEN / "ble_rf_tables.h"
+    if not dst.is_file() or dst.read_bytes() != src.read_bytes():
+        shutil.copyfile(src, dst)
 
 
 # ---- update loader

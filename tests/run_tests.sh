@@ -188,6 +188,27 @@ run "regression: golden renders, health, voices, CPU budget" "$OUT/regress" test
 run "regression: target cost of the render loops" python3 tests/target_budget.py \
     build/felucca.dis tests/target_budget.txt
 # the render split over the two cores (fx.c mix_units): the golden renders and tests/mix_split_test.c (three
+# Beat It: Bluetooth LE MIDI. Optimist's own tests of its BLE stack (ble/), the radio driver against a register
+# double, the stock VM parser on a real VM image, then Beat It's glue (midi_ble.c) with SLOOP's real MIDI path
+BLEC="cc -std=c99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -fno-sanitize=shift -fno-sanitize-recover=all"
+$BLEC -o "$OUT/ble_prim_test" tests/ble_prim_test.c && run "BLE: CRC24, whitening, channel selection, AES / CCM (Core spec samples)" "$OUT/ble_prim_test"
+$BLEC -o "$OUT/ble_stack_test" tests/ble_stack_test.c && run "BLE: link layer, L2CAP, ATT / GATT, BLE-MIDI against a simulated central" "$OUT/ble_stack_test"
+$BLEC -o "$OUT/ble_midi_test" tests/ble_midi_test.c && run "BLE-MIDI: the packet encoder / decoder (MIDI over BLE 1.0)" "$OUT/ble_midi_test"
+$BLEC -Itests/ble_fake -o "$OUT/ble_driver_test" tests/ble_driver_test.c && run "BLE: the FM-1 radio driver against a register double (no radio)" "$OUT/ble_driver_test"
+$BLEC -o "$OUT/ble_vm_test" tests/ble_vm_test.c && run "BLE: the stock VM parser (this unit's radio calibration) on a real FM-1 VM image" sh -c "cd tests && '$(cd "$OUT" && pwd)/ble_vm_test'"
+cc -O1 -g -fsanitize=address,undefined -fno-sanitize=shift -fno-sanitize-recover=all -w -Ibuild/gen -Ifirmware/src -o "$OUT/beatit_ble_test" tests/beatit_ble_test.c -lm &&
+    run "Beat It: Bluetooth MIDI in / out through SLOOP's MIDI path, the menu switches, stuck notes, the name" "$OUT/beatit_ble_test"
+# Beat It: the radio calibration backup end to end (real storage / settings / midi_ble on a RAM flash), and the scope
+# settings' storage (both on editor_host.c, built as tests/editor_fuzz.sh builds it: SMP_DATA through a pointer)
+mkdir -p "$OUT/gen"
+{ echo '#define SMP_DATA (smp_data_v)'; sed 's/^static const uint8_t SMP_DATA\[/static const uint8_t SMP_DATA_ARR[/' build/gen/felucca_samples.h;
+  echo 'static const uint8_t *volatile smp_data_v = SMP_DATA_ARR;'; } > "$OUT/gen/felucca_samples.h"
+EHC="cc -O1 -g -w -fsanitize=address,undefined -fno-sanitize=shift-base,signed-integer-overflow -fno-sanitize-recover=all -I$OUT/gen -Ibuild/gen -Ifirmware/src -Ifirmware/hal"
+$EHC -o "$OUT/beatit_rfcal_test" tests/beatit_rfcal_test.c -lm &&
+    run "Beat It: the radio calibration backup (made from the stock VM, kept in both settings copies, used once the VM is gone)" "$OUT/beatit_rfcal_test"
+$EHC -o "$OUT/beatit_settings_test" tests/beatit_settings_test.c -lm &&
+    run "Beat It: SCOPE VIEW / SCOPE COLOUR saved with the settings" "$OUT/beatit_settings_test"
+
 # FORMANT, FM6 or PHYS parts, S&H LFOs, mutes, the drums through the SLICER and the FILTER, the metronome: every
 # split of the units against none) under every mode of the host double of core 1, and under ThreadSanitizer
 run "the render split over the two cores: every mode of the second core's host double (tests/cpu1_modes.sh)" sh tests/cpu1_modes.sh

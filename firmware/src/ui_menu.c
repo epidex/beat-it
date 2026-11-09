@@ -12,6 +12,9 @@ enum { MI_COLOR, MI_ZOOM, MI_ACCEL, MI_SVIEW, MI_SCOL, MI_LIGHTS, MI_KEYS, MI_NO
        MI_SERIAL,
 #endif
        MI_RATE, MI_FRESO, MI_ADV, MI_DPREV, MI_MIN, MI_MOUT, MI_MSYNC, MI_MCLK, MI_BTRX, MI_BTTX, MI_BTLINK,
+#if FELUCCA_BLE
+       MI_BTCAL,
+#endif
        MI_CPU1, MI_PANEL, MI_LCLEAR, MI_ABOUT, MI_COUNT };
 static const char *const MI_NAME[MI_COUNT] = {"COLOR", "ZOOM", "KNOB ACCEL", "SCOPE VIEW", "SCOPE COLOUR", "LIGHTS", "KEYS", "NOTES", "SPEAKER LOWCUT", "USB AUDIO",
 #if FELUCCA_CDC
@@ -19,16 +22,38 @@ static const char *const MI_NAME[MI_COUNT] = {"COLOR", "ZOOM", "KNOB ACCEL", "SC
 #endif
                                               "USB RATE", "FILTER RESO", "STEP ADVANCE", "DRUM PREVIEW",
                                               "MIDI IN", "MIDI OUT", "CLOCK IN (SYNC)", "CLOCK OUT",
-                                              "BT MIDI RECEIVE", "BT MIDI SEND", "BT CONNECTION", "2ND CORE", "HARDWARE CALIBRATION", "MIDI LEARN CLEAR", "ABOUT"};
+                                              "BT MIDI RECEIVE", "BT MIDI SEND", "BT CONNECTION",
+#if FELUCCA_BLE
+                                              "RADIO CAL",
+#endif
+                                              "2ND CORE", "HARDWARE CALIBRATION", "MIDI LEARN CLEAR", "ABOUT"};
 /* (custom) the MIDI hub: MIDI (IN, OUT, clock in and out: the GLO > MIDI 2 / SYSTEM / MIDI 3 settings in one place)
  * and BLUETOOTH (receive, send, the connection). SLOOP has no Bluetooth driver: bt_ready() says so and the
  * BLUETOOTH rows only show it, until a driver fills in the bt_* hooks */
 enum { MS_SCREEN, MS_SCOPE, MS_LIGHTS, MS_AUDIO, MS_SEQ, MS_MIDI, MS_BT, MS_SYSTEM, MS_COUNT };   /* (2.7.1: SEQ) */
 static const char *const MS_NAME[MS_COUNT] = {"SCREEN", "SCOPE", "LIGHTS", "AUDIO", "SEQ", "MIDI", "BLUETOOTH", "SYSTEM"};
 static const uint8_t MS_FIRST[MS_COUNT + 1] = {MI_COLOR, MI_SVIEW, MI_LIGHTS, MI_LOWCUT, MI_ADV, MI_MIN, MI_BTRX, MI_CPU1, MI_COUNT};
-static uint8_t bt_rx, bt_tx;                       /* BLUETOOTH: receive / send wanted (kept for a driver; no effect yet) */
+static uint8_t bt_rx, bt_tx;                       /* BLUETOOTH: receive / send wanted (not saved: OFF at every power-on) */
+#if FELUCCA_BLE
+/* Beat It: Bluetooth LE MIDI (midi_ble.c). bt_ready: this unit's radio calibration was found, so the radio may start */
+static int bt_ready(void) { return ble_radio_ok(); }
+static const char *bt_link_name(void) { return ble_link_text(); }
+#define BT_NO_SHORT "NO RADIO CALIBRATION"       /* (this unit's stored radio calibration was not found) */
+#define BT_NO_MSG "NO RADIO CALIBRATION"
+static void bt_apply(void)
+{
+    uint8_t was = ble_cpu1_stopped;
+    ble_midi_set(bt_rx, bt_tx);
+    if (ble_cpu1_stopped && !was)
+        ui_message("2ND CORE OFF UNTIL RESTART");   /* (midi_ble.c ble_cpu1_down) */
+}
+#else
 static int bt_ready(void) { return 0; }            /* a Bluetooth MIDI driver is running (none in SLOOP) */
 static const char *bt_link_name(void) { return "NO DRIVER"; }   /* the connection: a driver names the peer here */
+static void bt_apply(void) {}
+#define BT_NO_SHORT "NO BT DRIVER"
+#define BT_NO_MSG "NO BLUETOOTH DRIVER YET"
+#endif
 /* a MIDI hub row's global setting (song.g: the FM-1's settings, kept as the GLO pages keep them) */
 UI_SMALL static int32_t mi_g(uint32_t i)
 {
@@ -121,8 +146,13 @@ UI_SMALL static const char *mi_value(uint32_t i, uint16_t *c)
             *c = C_DIM;
         return (i == MI_BTRX ? bt_rx : bt_tx) ? "ON" : "OFF";
     case MI_BTLINK:
-        *c = bt_ready() ? C_HI : C_DIM;
+        *c = bt_ready() && (bt_rx || bt_tx) ? C_HI : C_DIM;
         return bt_link_name();
+#if FELUCCA_BLE
+    case MI_BTCAL:                                    /* (Beat It) where the radio calibration came from (midi_ble.c) */
+        *c = bt_ready() ? C_HI : C_AMB;
+        return ble_cal_text();
+#endif
     case MI_LCLEAR: {                                 /* (2.6) the CCs MIDI LEARN holds; OCT+ clears them */
         static char b[8];
         uint32_t n = ml_count();
@@ -253,7 +283,11 @@ UI_SMALL static void draw_menu(void)
                     cv_text(xv + 8, y + 30, &FONT_S, "RESTART", C_AMB);   /* (usb.c: at the next start) */
 #endif
                 if ((i == MI_BTRX || i == MI_BTTX) && !bt_ready())
-                    cv_text(xv + 8, y + 30, &FONT_S, "NO BT DRIVER", C_AMB);
+                    cv_text(xv + 8, y + 30, &FONT_S, BT_NO_SHORT, C_AMB);
+#if FELUCCA_BLE
+                if (i == MI_BTCAL)
+                    cv_text(xv + 8, y + 30, &FONT_S, ble_cal_sub(), bt_ready() ? C_DIM : C_AMB);
+#endif
                 if (i == MI_MCLK && song.g[G_SYNC])
                     cv_text(xv + 8, y + 30, &FONT_S, "OFF WHILE SYNCED", C_AMB);
                 if (i == MI_CPU1 && !mi_cpu1_have())
@@ -387,14 +421,28 @@ UI_SMALL static void mi_set(uint32_t i, int32_t s)
     case MI_BTRX: case MI_BTTX: {                      /* right ON, left OFF; OCT+ toggles (wanted: a driver takes it) */
         uint8_t *v = i == MI_BTRX ? &bt_rx : &bt_tx;
         *v = (uint8_t)(s > 0 ? 1u : s < 0 ? 0u : !*v);
-        if (!bt_ready())
-            ui_message("NO BLUETOOTH DRIVER YET");
+        if (!bt_ready()) {
+            *v = 0;
+            ui_message(BT_NO_MSG);
+        }
+        bt_apply();                                    /* (Beat It: the radio on while either is ON) */
         break;
     }
-    case MI_BTLINK:                                    /* OCT+: pair / connect (a driver's job) */
+    case MI_BTLINK:                                    /* OCT+: what to do (no pairing: connect from the phone / computer) */
         if (!s && !bt_ready())
-            ui_message("NO BLUETOOTH DRIVER YET");
+            ui_message(BT_NO_MSG);
+        else if (!s && !bt_rx && !bt_tx)
+            ui_message("TURN BT MIDI ON FIRST");
+        else if (!s)
+            ui_message("CONNECT FROM YOUR APP");
         break;
+#if FELUCCA_BLE
+    case MI_BTCAL:                                     /* OCT+: what it means (read only: nothing to set) */
+        if (!s)
+            ui_message(ble_cal_text()[0] == 'S' ? "CAL BACKED UP IN SETTINGS" :
+                       ble_cal_text()[0] == 'B' ? "USING SAVED BACKUP" : "NO CAL: BT STAYS OFF");
+        break;
+#endif
     case MI_LCLEAR:                                    /* (2.6) every learned CC: OCT+ */
         if (!s)
             ui_message(ml_clear_all() ? "LEARN CLEARED" : "NOTHING LEARNED");

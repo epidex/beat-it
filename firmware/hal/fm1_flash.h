@@ -50,9 +50,20 @@ static inline void *fl_far(void *p) { void *volatile q = p; return q; }
  * the 1 MiB part ignores the high address bits, so a wrapped range lands low. */
 #define FL_IN(off, n, lo, hi) ((uint32_t)(off) >= (lo) && (uint32_t)(off) <= (hi) && \
                                (uint32_t)(n) <= (hi) - (uint32_t)(off))
-/* Felucca's own store (projects, user samples; settings; the FM6 bank) */
-#define FL_STORE_OK(off, n) (FL_IN(off, n, FL_DATA_LO, FL_DATA_HI) || FL_IN(off, n, FL_GLOB_LO, FL_GLOB_HI) || \
-                             FL_IN(off, n, FL_FM6_LO, FL_FM6_HI) || FL_IN(off, n, FL_USR4_LO, FL_USR4_HI))
+/* [off, off + n) touches [lo, hi) (n > 0), without computing off + n (as Optimist's fm1_flash_map.h) */
+#define FL_HITS(off, n, lo, hi) ((uint32_t)(off) < (hi) && \
+                                 ((uint32_t)(n) > (lo) || (uint32_t)(off) > (lo) - (uint32_t)(n)))
+/* Beat It: never written by the app. SLOOP 2.4's USR4 slot (0xE7000..0xFAFFF) lies over the stock firmware's SDK VM
+ * at 0xE8000 (its settings and this unit's radio calibration, which Bluetooth needs: ble/ble_vm.c), the SDK's BTIF
+ * 0xE9000 and its USR area 0xEA000..0xFBFFF; key_mac is 0xFF000. Uploading a USR4 sample would erase the radio
+ * calibration, which no installer puts back, so Beat It refuses those sectors: USR4 cannot be written (USR1..3 can). */
+#define FL_SDK_LO       0x000E7000u
+#define FL_SDK_HI       0x000FC000u
+#define FL_NEVER(off, n) (FL_HITS(off, n, FL_SDK_LO, FL_SDK_HI) || FL_HITS(off, n, 0x000FF000u, 0xFFFFFFFFu))
+/* Felucca's own store (projects, user samples USR1..3; settings; the FM6 bank) */
+#define FL_STORE_OK(off, n) (!FL_NEVER(off, n) && \
+                             (FL_IN(off, n, FL_DATA_LO, FL_DATA_HI) || FL_IN(off, n, FL_GLOB_LO, FL_GLOB_HI) || \
+                              FL_IN(off, n, FL_FM6_LO, FL_FM6_HI)))
 /* Where the RAM driver may erase / program. The app build allows only its own
  * data regions; the update loader (firmware/loader) defines its own window. */
 #ifndef FL_RANGE_OK
