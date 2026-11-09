@@ -515,7 +515,11 @@ UI_SMALL static void edit_param(uint32_t slot, int32_t steps)
             if (total)
                 preset_go((uint32_t)(((int32_t)cur + steps % (int32_t)total + (int32_t)total) % (int32_t)total));
         } else if (slot == 1u && !is_drum(TSEL)) {
-            select_engine((TSEL->eng_req + (steps > 0 ? 1u : NENGINES - 1u)) % NENGINES);
+            uint32_t e = TSEL->eng_req % NENGINES;      /* (Beat It) the next / previous FM engine */
+            do
+                e = (e + (steps > 0 ? 1u : NENGINES - 1u)) % NENGINES;
+            while (!beatit_eng_ok(e));
+            select_engine(e);
         } else if (slot == 3u && !is_drum(TSEL)) {          /* (2.7) KNOB 4: FAV, right adds the sound, left removes it */
             fav_toggle(steps > 0);
         }

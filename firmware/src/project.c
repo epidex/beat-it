@@ -888,9 +888,10 @@ UI_SMALL static void midi_part_fill(uint8_t *b)
     b[2u * ML_N + 3u] = (uint8_t)(midi_set[3] | (drum_preview != 0u) << 5 | (step_adv_off != 0u) << 6 | midi_set[4] << 7);
                                                     /* (2.7.1: bit 5 DRUM PREVIEW, bit 6 STEP ADVANCE OFF: bits 2.7 does not read) */
     b[2u * ML_N + 4u] = (uint8_t)(midi_set[5] | (fxfade > 15u ? 15u : fxfade) << 4);   /* BEND (bits 0-3); 2.7.2: FX FADE bits 4-7 (0 = none: the byte reads as 2.6's BEND) */
-    b[2u * ML_N + 5u] = midi_set[6];                /* (2.7) GLO > MIDI 3: FX CH (2.6 read this spare byte as nothing) */
+    b[2u * ML_N + 5u] = (uint8_t)(midi_set[6] | ((scope_col ^ 7u) & 7u) << 5);   /* (Beat It) bits 5-7: SCOPE COLOUR (0 = SOUND) */                /* (2.7) GLO > MIDI 3: FX CH (2.6 read this spare byte as nothing) */
     b[2u * ML_N + 6u] = (uint8_t)(midi_set[7] | midi_set[9] << 1 |
-                                  (flt_reso > 10u ? 10u : flt_reso) << 2);   /* (2.7) GLO > MIDI 3: DR MAP, bit 1 CLK OUT
+                                  (flt_reso > 10u ? 10u : flt_reso) << 2 |
+                                  (scope_view % SCOPE_VIEW_N) << 6);   /* (Beat It) bits 6-7: SCOPE VIEW (0 = FULL SCREEN) */   /* (2.7) GLO > MIDI 3: DR MAP, bit 1 CLK OUT
                                                                       * (a spare byte to 2.6); 2.7.2: FILTER RESO in bits
                                                                       * 2..5 (0 = none: the byte then reads as 2.7's) */
     b[2u * ML_N + 7u] = midi_set[8];                /* (2.7) GLO > MIDI 3: REMOTE (the last spare byte) */
@@ -931,13 +932,15 @@ UI_SMALL static void midi_part_read(const uint8_t *b, uint32_t n)
         song.g[G_BEND] = midi_set[5];
         fxfade = (uint8_t)((b[2u * ML_N + 4u] >> 4) & 15u);         /* (2.7.2) FX FADE (bits 4-7); older: 0 */
         song.g[G_FXFADE] = fxfade;
-        midi_set[6] = (uint8_t)(b[2u * ML_N + 5u] <= 16u ? b[2u * ML_N + 5u] : 0u);   /* (2.7) FX CH */
+        midi_set[6] = (uint8_t)((b[2u * ML_N + 5u] & 31u) <= 16u ? b[2u * ML_N + 5u] & 31u : 0u);   /* (2.7) FX CH */
+        scope_col = (uint8_t)(((b[2u * ML_N + 5u] >> 5) & 7u) ^ 7u);   /* (Beat It) SCOPE COLOUR; older: SOUND */
         song.g[G_FXCH] = midi_set[6];
         midi_set[7] = (uint8_t)(b[2u * ML_N + 6u] & 1u);             /* (2.7) DR MAP */
         midi_set[9] = (uint8_t)((b[2u * ML_N + 6u] >> 1) & 1u);      /* (2.7) CLK OUT */
         flt_reso = (uint8_t)((b[2u * ML_N + 6u] >> 2) & 15u);        /* (2.7.2) FILTER RESO (bits 2..5); older: 0 */
         if (flt_reso > 10u)
             flt_reso = 10u;
+        scope_view = (uint8_t)(((b[2u * ML_N + 6u] >> 6) & 3u) % SCOPE_VIEW_N);   /* (Beat It) SCOPE VIEW; older: FULL */
         song.g[G_DRMAP] = midi_set[7];
         song.g[G_CLKOUT] = midi_set[9];
         midi_set[8] = (uint8_t)(b[2u * ML_N + 7u] <= 16u ? b[2u * ML_N + 7u] : 0u);   /* (2.7) REMOTE */

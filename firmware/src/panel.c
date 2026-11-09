@@ -96,6 +96,13 @@ static uint8_t usb_rate;                        /* menu USB RATE (2.7 beta): 0 A
 static uint8_t cpu1_off;                        /* menu 2ND CORE: 1 = OFF, every render unit on core 0 (cpu1.h cpu1_units);
                                                  * 2.7: ON by default (bit 26 set = OFF); core 1 starts at power-on only when ON */
 static uint8_t vis_style;                       /* the visualiser's style, 0..11 (ui_vis.c) */
+/* (Beat It) menu SCREEN > SCOPE VIEW: 0 FULL SCREEN (power-on opens the full-screen oscilloscope), 1 NORMAL (HOME on
+ * HOME opens it, as SLOOP), 2 OFF (never shown). SCOPE COLOUR: the oscilloscope's trace (ui_vis.c), 7 = SOUND.
+ * Both kept in the MIDI part (project.c), so they survive power-off */
+#define SCOPE_VIEW_N 3u
+enum { SV_FULL, SV_NORMAL, SV_OFF };
+static uint8_t scope_view;
+static uint8_t scope_col = 7u;
 static uint8_t knob_accel_off;                  /* menu KNOB ACCEL (2.7): 1 = OFF, one value a detent however fast (ui_input.c accel) */
 static uint8_t step_adv_off;                    /* menu SEQ > STEP ADVANCE (2.7.1): 1 = OFF, the STEP page's cursor stays where it
                                                  * is when the keys are let go (KNOB 1 moves it); kept in the MIDI part */

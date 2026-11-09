@@ -7,13 +7,13 @@
  * OCT- closes (from ABOUT: back to the section). */
 /* ------------------------------------------------------------ menu --- */
 /* (2.7: USB SERIAL only in a build with the serial console, FELUCCA_CDC=1: the FM-1's build has none) */
-enum { MI_COLOR, MI_ZOOM, MI_ACCEL, MI_LIGHTS, MI_KEYS, MI_NOTES, MI_LOWCUT, MI_USB,
+enum { MI_COLOR, MI_ZOOM, MI_ACCEL, MI_SVIEW, MI_SCOL, MI_LIGHTS, MI_KEYS, MI_NOTES, MI_LOWCUT, MI_USB,
 #if FELUCCA_CDC
        MI_SERIAL,
 #endif
        MI_RATE, MI_FRESO, MI_ADV, MI_DPREV, MI_MIN, MI_MOUT, MI_MSYNC, MI_MCLK, MI_BTRX, MI_BTTX, MI_BTLINK,
        MI_CPU1, MI_PANEL, MI_LCLEAR, MI_ABOUT, MI_COUNT };
-static const char *const MI_NAME[MI_COUNT] = {"COLOR", "ZOOM", "KNOB ACCEL", "LIGHTS", "KEYS", "NOTES", "SPEAKER LOWCUT", "USB AUDIO",
+static const char *const MI_NAME[MI_COUNT] = {"COLOR", "ZOOM", "KNOB ACCEL", "SCOPE VIEW", "SCOPE COLOUR", "LIGHTS", "KEYS", "NOTES", "SPEAKER LOWCUT", "USB AUDIO",
 #if FELUCCA_CDC
                                               "USB SERIAL",
 #endif
@@ -23,9 +23,9 @@ static const char *const MI_NAME[MI_COUNT] = {"COLOR", "ZOOM", "KNOB ACCEL", "LI
 /* (custom) the MIDI hub: MIDI (IN, OUT, clock in and out: the GLO > MIDI 2 / SYSTEM / MIDI 3 settings in one place)
  * and BLUETOOTH (receive, send, the connection). SLOOP has no Bluetooth driver: bt_ready() says so and the
  * BLUETOOTH rows only show it, until a driver fills in the bt_* hooks */
-enum { MS_SCREEN, MS_LIGHTS, MS_AUDIO, MS_SEQ, MS_MIDI, MS_BT, MS_SYSTEM, MS_COUNT };   /* (2.7.1: SEQ) */
-static const char *const MS_NAME[MS_COUNT] = {"SCREEN", "LIGHTS", "AUDIO", "SEQ", "MIDI", "BLUETOOTH", "SYSTEM"};
-static const uint8_t MS_FIRST[MS_COUNT + 1] = {MI_COLOR, MI_LIGHTS, MI_LOWCUT, MI_ADV, MI_MIN, MI_BTRX, MI_CPU1, MI_COUNT};
+enum { MS_SCREEN, MS_SCOPE, MS_LIGHTS, MS_AUDIO, MS_SEQ, MS_MIDI, MS_BT, MS_SYSTEM, MS_COUNT };   /* (2.7.1: SEQ) */
+static const char *const MS_NAME[MS_COUNT] = {"SCREEN", "SCOPE", "LIGHTS", "AUDIO", "SEQ", "MIDI", "BLUETOOTH", "SYSTEM"};
+static const uint8_t MS_FIRST[MS_COUNT + 1] = {MI_COLOR, MI_SVIEW, MI_LIGHTS, MI_LOWCUT, MI_ADV, MI_MIN, MI_BTRX, MI_CPU1, MI_COUNT};
 static uint8_t bt_rx, bt_tx;                       /* BLUETOOTH: receive / send wanted (kept for a driver; no effect yet) */
 static int bt_ready(void) { return 0; }            /* a Bluetooth MIDI driver is running (none in SLOOP) */
 static const char *bt_link_name(void) { return "NO DRIVER"; }   /* the connection: a driver names the peer here */
@@ -75,7 +75,15 @@ UI_SMALL static const char *mi_value(uint32_t i, uint16_t *c)
     case MI_ZOOM: return settings.zoom ? "ON" : "OFF";
     case MI_ACCEL: return knob_accel_off ? "OFF" : "ON";   /* (2.7) the knobs speed up with a fast turn */
     case MI_ADV: return step_adv_off ? "OFF" : "ON";      /* (2.7.1) the STEP page's cursor moves on when the keys are let go */
-    case MI_DPREV: return drum_preview ? "ON" : "OFF";     /* (2.7.1) a drum sound picked with a knob is heard */
+    case MI_DPREV: return drum_preview ? "ON" : "OFF";
+    case MI_SVIEW: {                                  /* (Beat It) the scope's three presets */
+        static const char *const SV[SCOPE_VIEW_N] = {"FULL SCREEN", "NORMAL", "OFF"};
+        return SV[scope_view % SCOPE_VIEW_N];
+    }
+    case MI_SCOL:                                     /* (Beat It) the trace's colour ("COLOUR: X" without "COLOUR: ") */
+        if (scope_view == SV_OFF)
+            *c = C_DIM;
+        return SCOPE_COL_NAME[scope_col % SCOPE_NCOL] + 8;     /* (2.7.1) a drum sound picked with a knob is heard */
     case MI_LIGHTS: return LIGHTS_NAME[lights_lvl % LIGHTS_N];
     case MI_KEYS:
         *c = lights_lvl ? C_HI : C_DIM;               /* (needs LIGHTS) */
@@ -138,7 +146,7 @@ UI_SMALL static void draw_menu(void)
     uint32_t sig = ui.menu * 7u + ui.menu_sel * 131u + settings.palette * 1009u + settings.lowcut * 7919u +
                    settings.zoom * 104729u + lights_lvl * 1299709u + lights_keys * 15485863u + ml_count() * 2654435u +
                    lights_notes * 32452843u + usb_full * 49979687u + usb_serial * 86028121u + usb_rate * 15486719u + theme_shown() * 32452867u + theme.crc + cpu1_off * 122949829u +
-                   knob_accel_off * 179424673u + drum_preview * 236887691u + step_adv_off * 373587883u + flt_reso * 512927357u +
+                   knob_accel_off * 179424673u + scope_view * 7u + scope_col * 5u * 7919u + drum_preview * 236887691u + step_adv_off * 373587883u + flt_reso * 512927357u +
                    (uint32_t)song.g[G_ROUTE] * 3u + (uint32_t)song.g[G_MIDI] * 101u + (uint32_t)song.g[G_SYNC] * 1031u +
                    (uint32_t)song.g[G_CLKOUT] * 10037u + bt_rx * 100003u + bt_tx * 1000033u;
     if (!ui.force && sig == ui.menu_sig)
@@ -167,7 +175,7 @@ UI_SMALL static void draw_menu(void)
             cv_rect(96, 10, 8, 4, TE_COL[0]), cv_rect(96, 16, 12, 4, TE_COL[1]);   /* the sail */
             cv_rect(96, 22, 16, 4, TE_COL[2]), cv_rect(96, 28, 20, 4, TE_COL[3]);
             cv_text(4, 36, &FONT_S, "BASED ON FELUCCA", C_AMB);
-            cv_text(4, 54, &FONT_S, FELUCCA_VERSION, C_HI);
+            cv_text(4, 54, &FONT_S, BEATIT_VERSION " (" FELUCCA_VERSION ")", C_HI);
             cv_text(236 - text_w(&FONT_S, __DATE__), 54, &FONT_S, __DATE__, C_GRAY);   /* build date */
             cv_text(cv_text(4, 72, &FONT_S, "LEO KUROSHITA", C_HI) + 8, 72, &FONT_S, "@KUROGEDELIC", C_AMB);
             cv_text(4, 88, &FONT_S, "H\xDCGELTON INSTRUMENTS", C_HI);   /* Latin-1 U-umlaut */
@@ -301,6 +309,15 @@ UI_SMALL static void mi_set(uint32_t i, int32_t s)
         break;
     case MI_ADV:                                       /* (2.7.1) right ON, left OFF; OCT+ toggles (ui_input.c seq_entry) */
         step_adv_off = (uint8_t)(s > 0 ? 0u : s < 0 ? 1u : !step_adv_off);
+        break;
+    case MI_SVIEW:                                     /* (Beat It) the knob steps (stops at the ends), OCT+ round */
+        scope_view = (uint8_t)(s > 0 ? (scope_view + 1u < SCOPE_VIEW_N ? scope_view + 1u : scope_view) :
+                               s < 0 ? (scope_view ? scope_view - 1u : 0u) : (scope_view + 1u) % SCOPE_VIEW_N);
+        if (scope_view == SV_OFF)
+            vis_on = 0;
+        break;
+    case MI_SCOL:                                      /* (Beat It) the knob or OCT+ steps round */
+        scope_col = (uint8_t)((scope_col + (s < 0 ? SCOPE_NCOL - 1u : 1u)) % SCOPE_NCOL);
         break;
     case MI_DPREV:                                     /* (2.7.1) right ON, left OFF; OCT+ toggles (ui_studio.c drum_hear) */
         drum_preview = (uint8_t)(s > 0 ? 1u : s < 0 ? 0u : !drum_preview);

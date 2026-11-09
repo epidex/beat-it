@@ -157,7 +157,7 @@ int main(int argc, char **argv)
                 fails++;
             }
         for (e = 0; e < NENGINES; e++)
-            for (k = 0; k < ENGINES[e]->npresets; k++) {
+            for (k = 0; k < ENGINES[e]->npresets && beatit_eng_ok(e); k++) {   /* (Beat It: the FM engines') */
                 for (hits = 0, n = 0; n < NBANK; n++)
                     hits += BANK[n].e == e && bank_pi[n] == k;
                 if (hits != 1) {
@@ -174,8 +174,32 @@ int main(int argc, char **argv)
     for (i = 0; i < NPART; i++) { set_engine_of(&trk[i], TRK_DEF[i][0]); apply_preset_to(&trk[i], TRK_DEF[i][1]); trk[i].engine = trk[i].eng_req; }
     TDRUM->p[P_E0] = DRUM_DEFAULT_KIT;
     sloop_splash(); ppm("page-splash");
+    {
+        uint32_t px, purple = 0, other = 0;
+        for (px = 0; px < 240u * 240u; px++) {            /* the boot screen: black and purple only */
+            uint16_t c = swap16(screen[px]);
+            uint32_t r = (c >> 11) << 3, g = ((c >> 5) & 63u) << 2, bl = (c & 31u) << 3;
+            if (c && bl > g + 40u && r > g)
+                purple++;                                 /* purple, violet, magenta, pink */
+            else if (r + g + bl > 120u && !(bl > g && r > g))
+                other++;                                  /* (the dim purple-grey of the small print is still bl > g) */
+        }
+        check(purple > 3000u && other == 0u, "boot (Beat It): the boot screen is purple on black (BEAT IT)");
+    }
     ui.menu = 2; ui.force = 1; frame(); ppm("page-about"); ui.menu = 0;
-    go_home(); ui.force = 1; frame(); ppm("page-tracks");
+    go_home();
+    {   /* (Beat It) power-on: SCOPE VIEW FULL SCREEN (the default) opens the full-screen oscilloscope after the boot
+         * screen; HOME closes it; NORMAL and OFF stay on TRACKS; OFF: HOME on HOME does not open it */
+        check(scope_view == SV_FULL, "boot (Beat It): SCOPE VIEW defaults to FULL SCREEN");
+        beatit_boot_scope(); ui.force = 1; frame(); ppm("page-boot-scope");
+        check(vis_on && vis_style == 0u, "boot (Beat It): FULL SCREEN opens the full-screen oscilloscope");
+        vis_on = 0; scope_view = SV_NORMAL; beatit_boot_scope();
+        check(!vis_on, "boot (Beat It): NORMAL stays on TRACKS");
+        scope_view = SV_OFF; beatit_boot_scope(); vis_open();
+        check(!vis_on, "boot (Beat It): OFF never opens it");
+        scope_view = SV_FULL; vis_on = 0;
+    }
+    ui.force = 1; frame(); ppm("page-tracks");
     open_family(FAM_ENV); ui.force = 1; ui.hot_col = 1; ui.hot_t = 30; frame(); ppm("page-env");
     open_family(FAM_ARP); ui.force = 1; frame(); ppm("page-arp");
     check(big_page(cur_page()) && !strcmp(cur_page()->title, "ARP"), "ARP (2.7.2): page 1 shows its values large, as ARP 2");
@@ -1138,6 +1162,25 @@ int main(int argc, char **argv)
             ui.menu_sel = (uint8_t)m0; frame();
         }
         ui.menu_sel = 0; frame();
+        encs[panel.enc[EN_SELECT]] = 1; frame(); ui.force = 1; frame(); ppm("menu-scope");
+        {   /* (Beat It) the SCOPE section: SCOPE VIEW (FULL SCREEN / NORMAL / OFF), SCOPE COLOUR; kept in the MIDI part */
+            uint8_t v0 = scope_view, c0 = scope_col;
+            check(mi_sec(ui.menu_sel) == MS_SCOPE && ui.menu_sel == MI_SVIEW &&
+                  !strcmp(mi_value(MI_SVIEW, &(uint16_t){0}), "FULL SCREEN") && !strcmp(mi_value(MI_SCOL, &(uint16_t){0}), "SOUND"),
+                  "menu (Beat It): SELECT right: SCOPE (VIEW FULL SCREEN, COLOUR SOUND by default)");
+            encs[panel.enc[EN_K1]] = 1; frame();
+            check(scope_view == SV_NORMAL && !strcmp(mi_value(MI_SVIEW, &(uint16_t){0}), "NORMAL"), "menu SCOPE: KNOB 1 right: NORMAL");
+            encs[panel.enc[EN_K1]] = 1; frame(); ui.force = 1; frame(); ppm("menu-scope-off");
+            check(scope_view == SV_OFF && !strcmp(mi_value(MI_SVIEW, &(uint16_t){0}), "OFF"), "menu SCOPE: KNOB 1 right again: OFF");
+            encs[panel.enc[EN_K1]] = 1; frame();
+            check(scope_view == SV_OFF, "menu SCOPE: SCOPE VIEW stops at OFF");
+            mi_set(MI_SVIEW, 0);
+            check(scope_view == SV_FULL, "menu SCOPE: OCT+ steps round (OFF -> FULL SCREEN)");
+            encs[panel.enc[EN_K2]] = 1; frame();
+            check(scope_col == 0u && ui.menu_sel == MI_SCOL && !strcmp(mi_value(MI_SCOL, &(uint16_t){0}), "THEME"),
+                  "menu SCOPE: KNOB 2 steps SCOPE COLOUR round (SOUND -> THEME), the cursor follows");
+            scope_view = v0; scope_col = c0;
+        }
         encs[panel.enc[EN_SELECT]] = 1; frame();
         check(mi_sec(ui.menu_sel) == MS_LIGHTS && ui.menu_sel == MI_LIGHTS, "menu: SELECT right: LIGHTS, the cursor on its first row");
         encs[panel.enc[EN_K2]] = 1; frame(); encs[panel.enc[EN_K2]] = 1; frame();
@@ -1487,6 +1530,7 @@ int main(int argc, char **argv)
         tap(B_HOME); frames(2);
         check(vis_shown() && vis_on, "visualiser: HOME on HOME opens it");
         vis_style = 0; ui.force = 1;
+        scope_col = 0;                              /* (Beat It: the default is SOUND; this walk starts at THEME) */
         for (st = 0; st < 12u; st++) {
             char nm[80];
             frames(st == 0u ? 40u : 70u);           /* (past the name's second) */
@@ -1743,7 +1787,10 @@ int main(int argc, char **argv)
         check(ins_d, "the drum track: the INSERT page in FX");
         go_home(); frames(16);
 
-        song.sel = 0; set_engine_of(&trk[0], 0); trk[0].engine = trk[0].eng_req; go_home(); frame();
+        song.sel = 0; set_engine_of(&trk[0], 0);
+        check(trk[0].eng_req == ENGI_FM6, "Beat It: a track asked for ANALOG gets FM6 (drums and FM only)");
+        beatit_all_eng = 1; set_engine_of(&trk[0], 0); trk[0].engine = trk[0].eng_req; beatit_all_eng = 0;   /* (a project saved by SLOOP can still hold ANALOG) */
+        go_home(); frame();
         WALK(FAM_EDIT, "FILTER", flt_a);
         open_family(FAM_EDIT); frame();
         for (j = 0; j < 30u && strcmp(PAGES[ui.page].title, "FILTER"); j++) { encs[panel.enc[EN_SELECT]] = 1; frame(); }
@@ -1785,7 +1832,7 @@ int main(int argc, char **argv)
         check(trk[0].p[P_DIST] == TP[P_DIST].max, "CC 74 (any channel): track 1's DIST to its top");
         trk[0].p[P_DIST] = 0;
         ui.menu = 1; ui.menu_sel = 0; ui.force = 1; frame();
-        for (j = 0; j < 6u; j++) { encs[panel.enc[EN_SELECT]] = 1; frame(); }
+        for (j = 0; j < 7u; j++) { encs[panel.enc[EN_SELECT]] = 1; frame(); }   /* (Beat It: one more section, SCOPE) */
         encs[panel.enc[EN_K3]] = 1; frame();          /* (dualcore: row 3, after 2ND CORE) */
         tap(B_OCTUP);
         check(ui.menu_sel == MI_LCLEAR && ml_count() == 0u, "menu SYSTEM > MIDI LEARN CLEAR, OCT+: nothing learned any more");
@@ -2185,6 +2232,23 @@ int main(int argc, char **argv)
         }
         fm1_in.buttons = 0; fm1_in.notes = 0; frames(4);
         #undef R
+    }
+    {   /* (Beat It) the screenshots in the purple-and-black theme (the default on the device): bi-*.ppm */
+        static const char *const SEC[MS_COUNT] = {"screen", "scope", "lights", "audio", "seq", "midi", "bluetooth", "system"};
+        uint32_t k;
+        ui.menu = 0; theme_on = 0; settings.palette = PAL_PURPLE; palette_set(PAL_PURPLE);
+        scope_view = SV_FULL; scope_col = 7u; vis_on = 0;
+        sloop_splash(); ppm("bi-01-boot");
+        go_home(); beatit_boot_scope(); ui.force = 1; frames(24); ppm("bi-02-boot-scope");
+        vis_on = 0; go_home(); ui.force = 1; frames(2); ppm("bi-03-tracks");
+        for (k = 0; k < MS_COUNT; k++) {
+            char nm[32];
+            ui.menu = 1; ui.menu_sel = MS_FIRST[k]; ui.force = 1; frame(); frame();
+            snprintf(nm, sizeof nm, "bi-%02u-menu-%s", (unsigned)(k + 4u), SEC[k]);
+            ppm(nm);
+        }
+        scope_view = SV_OFF; ui.menu = 1; ui.menu_sel = MI_SVIEW; ui.force = 1; frame(); frame(); ppm("bi-12-menu-scope-off");
+        ui.menu = 0; scope_view = SV_FULL; go_home(); ui.force = 1; frame();
     }
     printf("ui: %s\n", fails ? "FAILED" : "pages, layers (punch, steps, erase, roll, key, mix), layer lock, song layer, REC hold, drums, REC, 20000-frame fuzz PASS");
     return fails;

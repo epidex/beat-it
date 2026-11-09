@@ -196,6 +196,7 @@ UI_SMALL static void felucca_init(void)
     song.g[G_FXFADE] = fxfade;                        /* (2.7.2) GLO > MASTER 2: the punch-in FX fade */                    /* (2.7) GLO > MIDI 3: FX CH */   /* settings of the FM-1) */
     layers_init();                            /* the panel's layer buttons for the keys (ui_layers.c) */
     go_home();
+    beatit_boot_scope();                      /* (Beat It) SCOPE VIEW FULL SCREEN: the full-screen oscilloscope (ui_vis.c) */
     ui.force = 1;
 }
 

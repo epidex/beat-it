@@ -41,9 +41,20 @@ static const uint8_t VIS_EDGE[33] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 
 static int vis_shown(void) { return vis_on && !ui.home && !ui.menu && cur_page()->scope == SC_TRK; }
 static void vis_open(void)
 {
+    if (scope_view == SV_OFF)
+        return;                                     /* (Beat It) SCOPE VIEW OFF */
     vis_on = 1;
     vis_name_t = 30;
     ui.force = 1;
+}
+/* (Beat It) at power-on, after go_home(): SCOPE VIEW FULL SCREEN opens the visualiser as the OSCILLOSCOPE (HOME closes
+ * it, HOME again opens it, SELECT still steps the styles); NORMAL and OFF leave the TRACKS screen */
+static void beatit_boot_scope(void)
+{
+    if (scope_view != SV_FULL)
+        return;
+    vis_style = 0;
+    vis_open();
 }
 static int32_t isin(uint32_t a) { return SINE[a & 1023u]; }          /* a: 1024 a turn; Q15 */
 static int32_t icos(uint32_t a) { return SINE[(a + 256u) & 1023u]; }
@@ -216,7 +227,7 @@ static void vis_bands(int16_t *out)
 #define SCOPE_NCOL 8u
 static const char *const SCOPE_COL_NAME[SCOPE_NCOL] = {"COLOUR: THEME", "COLOUR: PURPLE", "COLOUR: MAGENTA",
     "COLOUR: VIOLET", "COLOUR: CYAN", "COLOUR: GREEN", "COLOUR: WHITE", "COLOUR: SOUND"};
-static uint8_t scope_col;
+/* scope_col: panel.c (kept with the settings) */
 static int32_t scope_e[3];                          /* SOUND: bass, mids, treble, 0..1000 x 16 (eased) */
 static uint16_t scope_mix(void)
 {
