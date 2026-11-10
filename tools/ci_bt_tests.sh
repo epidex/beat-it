@@ -23,6 +23,7 @@ mkdir -p "$OUT/gen"
 EHC="cc -O1 -g -w -fsanitize=address,undefined -fno-sanitize=shift-base,signed-integer-overflow -fno-sanitize-recover=all -I$OUT/gen -Ibuild/gen -Ifirmware/src -Ifirmware/hal"
 $EHC -o "$OUT/beatit_rfcal_test" tests/beatit_rfcal_test.c -lm && t "radio calibration backup" "$OUT/beatit_rfcal_test"
 t "Linux test tool against the firmware's BLE-MIDI code" python3 tests/bt_tool_interop.py "$OUT/beatit_ble_test"
+t "messages fit the screen's message bar" python3 tests/beatit_msg_len.py
 t "Linux test tool self-test" python3 tools/beatit_bt_test.py --selftest
 t "Linux test tool through bleak's API" python3 tests/bt_tool_fake_bleak.py
 [ "$fail" = 0 ] && echo "ci_bt_tests: all passed" || echo "ci_bt_tests: FAILED"

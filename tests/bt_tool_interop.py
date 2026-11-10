@@ -56,8 +56,8 @@ def main():
               "... both BT STATUS questions answered, the tool decoded %d replies from %d notifications" % (len(st), len(pk)))
         if len(st) == 2 and all(st):
             a, b = st
-            check(a["version"] == "1.4" and a["radio_cal"] == "BACKUP" and a["clock_in"] == "BT" and a["receive"] and a["send"],
-                  "... reply fields: Beat It 1.4, RADIO CAL BACKUP, CLOCK IN BT, RECEIVE + SEND on")
+            check(a["version"] == "1.5" and a["radio_cal"] == "BACKUP" and a["clock_in"] == "BT" and a["receive"] and a["send"],
+                  "... reply fields: Beat It 1.5, RADIO CAL BACKUP, CLOCK IN BT, RECEIVE + SEND on")
             check(a["in"] < b["in"] == 20, "... IN %d in the first reply (what shared its write), 20 in the last (asked after everything)" % a["in"])
             check(all(len(p) <= 20 for p in pk), "... every notification within 20 bytes (the default ATT MTU)")
     return 1 if fails else 0

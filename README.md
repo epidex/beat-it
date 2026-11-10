@@ -1,3 +1,45 @@
+# Beat It
+
+**Custom firmware for the M-VAVE FM-1**, built on [SLOOP](https://github.com/isod89/sloop-fm1) 2.8.5 (GPL-3.0-only). Beat It keeps SLOOP's drums and its two FM engines, and adds a purple-and-black theme, a BEAT IT boot screen, a full-screen colour scope, a MIDI menu and experimental Bluetooth MIDI (Optimist's open-source driver).
+
+> **Status: simulator only.** Every version builds and passes its tests in a simulator. None has run on a real FM-1 yet, and the Bluetooth code has never transmitted over a real radio. Install at your own risk.
+
+**Before you flash anything, back up.** Open SLOOP's [web editor](https://isod89.github.io/sloop-fm1/webapp/editor/) in Chrome or Edge, save a backup of your projects, and check that the file is really on your PC. On the official firmware, use M-VAVE's [FM-1 Workbench](https://open.m-vave.com/fm1-workbench) instead: Beat It can't open the official firmware's projects.
+
+## Install (Windows, Chrome or Edge)
+
+1. Download `Beat-It-1.5-installer.html` from the [latest release](https://github.com/epidex/beat-it/releases/latest) and double-click it.
+2. Plug the FM-1 straight into the PC, not through a hub, and close any other app that uses MIDI.
+3. Wait for the page to say "Beat It 1.5", press **INSTALL**, allow MIDI access, and wait for "Done".
+
+The full steps, the first Bluetooth test and how to go back are in [docs/BEAT-IT-INSTALL.md](docs/BEAT-IT-INSTALL.md). What each version changed is in [BEAT-IT.md](BEAT-IT.md).
+
+## Versions and rolling back
+
+Every version has a tag and a release with its installer on the [Releases](https://github.com/epidex/beat-it/releases) page:
+
+- **v1.0:** drums and FM only, Beat It boot screen, full-screen scope
+- **v1.1:** Bluetooth MIDI, radio calibration backup
+- **v1.2:** follows a Bluetooth MIDI clock
+- **v1.3:** sends its clock over Bluetooth
+- **v1.4:** BT STATUS and the Linux Bluetooth test script
+- **v1.5:** keeps both processor cores running with Bluetooth on (plus an optional STOCK SUPPLY test build)
+
+To go back, install an older release's installer the same way. To return to the official firmware, use M-VAVE's M-UPGRADE.
+
+## Get the code
+
+```
+git clone https://github.com/epidex/beat-it.git
+cd beat-it && git pull     # later, to get updates
+```
+
+Every push is built on GitHub (the **Actions** tab), and a `v*` tag publishes a release.
+
+---
+
+*Below is SLOOP's own README, kept as it is. Beat It removes some of the sounds and engines it describes.*
+
 <p align="center"><img src="assets/logo/sloop-logo.png" alt="SLOOP" width="420"></p>
 
 <p align="center"><b>A live groovebox firmware for the M-VAVE FM-1 — for any style.</b><br>

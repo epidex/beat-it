@@ -33,7 +33,8 @@ static const char *const MI_NAME[MI_COUNT] = {"COLOR", "ZOOM", "KNOB ACCEL", "SC
 enum { MS_SCREEN, MS_SCOPE, MS_LIGHTS, MS_AUDIO, MS_SEQ, MS_MIDI, MS_BT, MS_SYSTEM, MS_COUNT };   /* (2.7.1: SEQ) */
 static const char *const MS_NAME[MS_COUNT] = {"SCREEN", "SCOPE", "LIGHTS", "AUDIO", "SEQ", "MIDI", "BLUETOOTH", "SYSTEM"};
 static const uint8_t MS_FIRST[MS_COUNT + 1] = {MI_COLOR, MI_SVIEW, MI_LIGHTS, MI_LOWCUT, MI_ADV, MI_MIN, MI_BTRX, MI_CPU1, MI_COUNT};
-static uint8_t bt_rx, bt_tx;                       /* BLUETOOTH: receive / send wanted (not saved: OFF at every power-on) */
+static uint8_t bt_rx, bt_tx;                       /* BLUETOOTH: receive / send wanted ((Beat It 1.5) saved: project.c; ON
+                                                    * at power-off starts the radio at the next power-on, midi_ble.c) */
 #if FELUCCA_BLE
 /* Beat It: Bluetooth LE MIDI (midi_ble.c). bt_ready: this unit's radio calibration was found, so the radio may start */
 static int bt_ready(void) { return ble_radio_ok(); }
@@ -46,7 +47,9 @@ static void bt_apply(void)
     uint8_t was = ble_cpu1_stopped;
     ble_midi_set(bt_rx, bt_tx);
     if (ble_cpu1_stopped && !was)
-        ui_message("2ND CORE OFF UNTIL RESTART");   /* (midi_ble.c ble_cpu1_down) */
+        ui_message("1 CORE UNTIL RESTART");   /* (midi_ble.c ble_cpu1_down) */
+    else if ((bt_rx || bt_tx) && bt_ready())
+        ui_message("BT STAYS ON AT POWER-ON");    /* (1.5) the safest way: turn it on, restart, then play */
 }
 #else
 static int bt_ready(void) { return 0; }            /* a Bluetooth MIDI driver is running (none in SLOOP) */
@@ -454,7 +457,7 @@ UI_SMALL static void mi_set(uint32_t i, int32_t s)
 #if FELUCCA_BLE
     case MI_BTCAL:                                     /* OCT+: what it means (read only: nothing to set) */
         if (!s)
-            ui_message(ble_cal_text()[0] == 'S' ? "CAL BACKED UP IN SETTINGS" :
+            ui_message(ble_cal_text()[0] == 'S' ? "CAL SAVED IN SETTINGS" :
                        ble_cal_text()[0] == 'B' ? "USING SAVED BACKUP" : "NO CAL: BT STAYS OFF");
         break;
 #endif

@@ -83,6 +83,9 @@ static uint32_t cpu1_host_jobs(void) { return c1h.jobs; }
 static uint32_t cpu1_host_timeouts(void) { return c1h.timeouts; }
 static int cpu1_host_mode(void) { cpu1_host_init(); return c1h.mode; }
 
+/* (Beat It 1.5) the 400 ms hold after the radio starts (cpu1.c): recorded; tests read it */
+static uint32_t cpu1_host_hold_ms, cpu1_host_holds;
+static void cpu1_hold_jobs_ms(uint32_t ms) { cpu1_host_hold_ms = ms; cpu1_host_holds++; }
 static int cpu1_run(cpu1_job_t fn, uint32_t arg)
 {
     cpu1_host_init();

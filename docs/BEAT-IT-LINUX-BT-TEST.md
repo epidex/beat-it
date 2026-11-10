@@ -2,7 +2,7 @@
 
 `tools/beatit-bt-test.sh` connects to your FM-1 over Bluetooth, walks you through each check, and writes a log file with everything it saw, every packet included. Send that file back and it shows what the radio did, without photos of the screen.
 
-It's free. It doesn't need Claude, an account, or a subscription. It never pairs, never installs firmware, and never erases anything. It only sends MIDI to the FM-1: notes, a clock, and Beat It 1.4's BT STATUS question, which the FM-1 only answers.
+It's free. It doesn't need Claude, an account, or a subscription. It never pairs, never installs firmware, and never erases anything. It only sends MIDI to the FM-1: notes, a clock, and Beat It's BT STATUS question (1.4 and later), which the FM-1 only answers.
 
 **It has only been tested against a simulated FM-1, not a real radio.** See "What was tested" at the end.
 
@@ -11,7 +11,7 @@ It's free. It doesn't need Claude, an account, or a subscription. It never pairs
 - A Linux computer with a Bluetooth 4.0 or newer adapter (built in, or a USB dongle). Ubuntu, Debian, Mint, Fedora, Pop!_OS and Raspberry Pi OS all work: they use BlueZ, Linux's normal Bluetooth stack.
 - Python 3.8 or newer. It comes with all of those.
 - Internet the first time only, to download the free `bleak` Bluetooth package.
-- Your FM-1 running **Beat It 1.4**. 1.3 and older work too, but they can't answer BT STATUS, so the script relies on your answers and skips the stress step.
+- Your FM-1 running **Beat It 1.5** (1.4 works the same way). 1.3 and older work too, but they can't answer BT STATUS, so the script relies on your answers and skips the stress step.
 
 On Debian, Ubuntu, Mint or Raspberry Pi OS, if the script says something is missing:
 
@@ -28,7 +28,7 @@ git clone https://github.com/epidex/beat-it.git
 cd beat-it
 ```
 
-The build also puts **Beat-It-1.4-linux-bt-test.tar.gz** on the release and in each build's packages. It holds just the script and this guide. Unpack it, then `cd beat-it-1.4-bt-test` and run the same command from there.
+The build also puts **Beat-It-1.5-linux-bt-test.tar.gz** on the release and in each build's packages. It holds just the script and this guide. Unpack it, then `cd beat-it-1.5-bt-test` and run the same command from there.
 
 ## Run it
 
@@ -80,14 +80,16 @@ Exit codes: 0 everything that ran passed, 1 a step failed, 2 no FM-1 found or no
 - **"the bluetooth service is not running"**: run `sudo systemctl start bluetooth`.
 - **No BEAT IT found** while BT CONNECTION says ADVERTISING: the FM-1 thinks it's on the air, but the computer doesn't hear it. That's a radio or calibration result, and worth sending. Move closer and try once more first.
 - **It connects, then drops:** note whether BT CONNECTION showed CONNECTED for a moment. Then run `bluetoothctl remove` followed by the FM-1's address (the scan step prints it), and try again. That clears what BlueZ remembered about it.
-- **The FM-1 freezes or restarts:** power it off and on, open Menu > BLUETOOTH and write down the **RESET DURING** line. With 1.4, BT STATUS also reports it the next time you connect.
+- **The FM-1 freezes or restarts:** power it off and on, open Menu > BLUETOOTH and write down the **RESET DURING** line. With 1.4 and later, BT STATUS also reports it the next time you connect.
 
 ## BT STATUS (new in 1.4)
 
-When a connected app or computer sends the SysEx message `F0 7D 42 49 01 F7`, Beat It 1.4 answers with one SysEx `F0 7D 42 49 02 … F7` (38 bytes). It includes:
+In 1.5 the reply says version 1.5. Bluetooth no longer stops the second core, so on 1.5 the status step fails if the second core is reported stopped: that means the FM-1 fell back to one core after a fault, and the log is worth sending.
+
+When a connected app or computer sends the SysEx message `F0 7D 42 49 01 F7`, Beat It 1.4 and later answer with one SysEx `F0 7D 42 49 02 … F7` (38 bytes). It includes:
 
 - the Beat It version, RADIO CAL (MISSING, STOCK or BACKUP), and the RESET DURING step
-- whether RECEIVE and SEND are on, whether the app has notifications on, whether the link is encrypted, and whether the second core is stopped
+- whether RECEIVE and SEND are on, whether the app has notifications on, whether the link is encrypted, whether the second core is stopped, and (1.5) whether the radio started at power-on
 - the CLOCK IN and CLOCK OUT settings
 - the IN, OUT, LOST in and LOST out counts
 - the connection interval, supervision timeout, MTU and data length that the link actually agreed on
@@ -98,7 +100,7 @@ It's answered only while BT MIDI RECEIVE or SEND is on. It's never played, and i
 
 None of this has run on a real FM-1 or a real Bluetooth radio. My workspace has no Bluetooth hardware.
 
-- `python3 tools/beatit_bt_test.py --selftest`: the script's BLE-MIDI encoder and decoder (running status, timestamps wrapping, a clock inside a SysEx, a SysEx split over packets, packet sizes 20 to 182), BT STATUS's layout, and every step against a simulated Beat It 1.4. Four cases: everything works; Beat It 1.3 with no BT STATUS; an FM-1 that drops every 7th message, which receive, clockin and stress must catch; and a TEMPO on the screen that doesn't match the clock, which clockout must catch.
+- `python3 tools/beatit_bt_test.py --selftest`: the script's BLE-MIDI encoder and decoder (running status, timestamps wrapping, a clock inside a SysEx, a SysEx split over packets, packet sizes 20 to 182), BT STATUS's layout, and every step against a simulated Beat It 1.5 and 1.4. Five cases: everything works on 1.5; everything works on 1.4; Beat It 1.3 with no BT STATUS; an FM-1 that drops every 7th message, which receive, clockin and stress must catch; and a TEMPO on the screen that doesn't match the clock, which clockout must catch.
 - `tests/bt_tool_interop.py`: the script's packets fed into the firmware's own Bluetooth MIDI code (compiled for the PC), and the firmware's replies decoded by the script, at packet sizes 20, 23 and 64.
 - `tests/bt_tool_fake_bleak.py`: the real Bluetooth code path in the script, run through the installed `bleak` package's own device, advertisement and GATT objects, with a fake radio underneath. This catches wrong calls or attributes against bleak 3.1.
 

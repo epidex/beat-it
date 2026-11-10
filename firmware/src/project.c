@@ -894,7 +894,8 @@ UI_SMALL static void midi_part_fill(uint8_t *b)
                                   (scope_view % SCOPE_VIEW_N) << 6);   /* (Beat It) bits 6-7: SCOPE VIEW (0 = FULL SCREEN) */   /* (2.7) GLO > MIDI 3: DR MAP, bit 1 CLK OUT
                                                                       * (a spare byte to 2.6); 2.7.2: FILTER RESO in bits
                                                                       * 2..5 (0 = none: the byte then reads as 2.7's) */
-    b[2u * ML_N + 7u] = (uint8_t)(midi_set[8] | ((midi_set[9] >> 1) & 1u) << 7);   /* (2.7) GLO > MIDI 3: REMOTE (the last
+    b[2u * ML_N + 7u] = (uint8_t)(midi_set[8] | (bt_rx != 0u) << 5 | (bt_tx != 0u) << 6 |
+                                  ((midi_set[9] >> 1) & 1u) << 7);   /* (Beat It 1.5) bits 5-6: BT MIDI RECEIVE, SEND */   /* (2.7) GLO > MIDI 3: REMOTE (the last
                                                     * spare byte, 0..16); (Beat It 1.3) bit 7: CLOCK OUT to BT */
 }
 UI_SMALL static int midi_part_default(const uint8_t *b)
@@ -948,6 +949,8 @@ UI_SMALL static void midi_part_read(const uint8_t *b, uint32_t n)
         midi_set[8] = (uint8_t)((b[2u * ML_N + 7u] & 31u) <= 16u ? b[2u * ML_N + 7u] & 31u : 0u);   /* (2.7) REMOTE
                                                                       * (bits 0-4; Beat It 1.3: bit 7 CLOCK OUT BT) */
         song.g[G_RMCH] = midi_set[8];
+        bt_rx = (uint8_t)((b[2u * ML_N + 7u] >> 5) & 1u);            /* (Beat It 1.5) BT MIDI RECEIVE / SEND as at power-off */
+        bt_tx = (uint8_t)((b[2u * ML_N + 7u] >> 6) & 1u);            /* (1.4 and older: OFF; their bits were 0) */
     }
     fm1_irq_on();
 }

@@ -96,11 +96,16 @@ void fm1_alnk0_irq(void)                       /* via isr_alnk0 (hal/fm1_isr.S) 
     felucca_dbg.in_audio = 0;
 }
 extern void isr_alnk0(void);
+extern void isr_alnk0_ram(void);                   /* (Beat It 1.5) the same entry in RAM (fm1_isr.S, after Optimist) */
 
 static void audio_init(void)                   /* hal/fm1_audio.h */
 {
     uint32_t i;
     for (i = 0; i < 2u * HALF_WORDS; i++)
         abuf[i] = 0;
+#if FELUCCA_CPU1
+    fm1_audio_init(abuf, HALF_WORDS, isr_alnk0_ram, 3);
+#else
     fm1_audio_init(abuf, HALF_WORDS, isr_alnk0, 3);
+#endif
 }

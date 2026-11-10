@@ -245,11 +245,20 @@ static void fl_plain_window_init(void)
 static inline uint32_t irq_save(void) { __asm__ volatile("cli" ::: "memory"); return 0; }
 static inline void irq_restore(uint32_t f) { (void)f; __asm__ volatile("csync\n\tsti" ::: "memory"); }
 
+/* (Beat It 1.5) every flash command with interrupts off and, in a two-core build, core 1 parked in RAM first
+ * (felucca.c defines the hooks: fm1_cpu1.h fm1_cpu1_park / unpark, after Optimist's dual_flash_enter) */
+#ifndef FM1_FLASH_PARK
+#define FM1_FLASH_PARK() 0
+#define FM1_FLASH_UNPARK(p) ((void)(p))
+#endif
+static inline uint32_t fl_lock(void) { __asm__ volatile("cli" ::: "memory"); return (uint32_t)FM1_FLASH_PARK(); }
+static inline void fl_unlock(uint32_t p) { FM1_FLASH_UNPARK((int)p); __asm__ volatile("csync\n\tsti" ::: "memory"); }
+
 static int fl_erase4k(uint32_t off, uint32_t *took_us)
 {
-    uint32_t f = irq_save();
+    uint32_t f = fl_lock();
     int rc = FL_FAR(fl_erase4k_ram)(off, took_us);
-    irq_restore(f);
+    fl_unlock(f);
     return rc;
 }
 
@@ -261,9 +270,9 @@ static int fl_write(uint32_t off, const uint8_t *src_ram, uint32_t n)
         int rc;
         uint32_t f;
         if (chunk > n) chunk = n;
-        f = irq_save();
+        f = fl_lock();
         rc = FL_FAR(fl_prog_ram)(off, src_ram, chunk, &took);
-        irq_restore(f);
+        fl_unlock(f);
         if (rc) return rc;
         off += chunk; src_ram += chunk; n -= chunk;
     }

@@ -5,7 +5,11 @@ and the two FM engines, adds a purple-and-black theme, a BEAT IT start-up screen
 presets, a dedicated MIDI menu, and (from 1.1) Bluetooth MIDI using Optimist's open-source driver, with a backup of the
 unit's radio calibration. 1.2 added following a Bluetooth clock; 1.3 added sending the clock over Bluetooth (CLOCK OUT BT / USB+BT)
 and ends held notes when BT MIDI SEND is turned off; 1.4 adds BT STATUS (a SysEx question any connected app can ask)
-and a Linux Bluetooth test script, `tools/beatit-bt-test.sh` ([docs/BEAT-IT-LINUX-BT-TEST.md](docs/BEAT-IT-LINUX-BT-TEST.md)).
+and a Linux Bluetooth test script, `tools/beatit-bt-test.sh` ([docs/BEAT-IT-LINUX-BT-TEST.md](docs/BEAT-IT-LINUX-BT-TEST.md)); 1.5 keeps the second
+core running with Bluetooth on, using Optimist's order for it: the radio starts at power-on when BT MIDI was saved ON,
+before the audio; no core 1 job for 400 ms after a radio start; core 1 parked during flash writes; the audio interrupt
+entries in RAM. The opt-in STOCK SUPPLY test build (`BEATIT_STOCK_SUPPLY=1`) also runs M-VAVE's own supply start-up.
+BT STATUS says 1.5, flags a radio started at power-on (64), and flags 16 if core 1 was stopped after a fault.
 
 **Status:** builds and passes its tests in a simulator. It has not run on a real FM-1, and Bluetooth has never been
 tried over a real radio.

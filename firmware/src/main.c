@@ -112,6 +112,12 @@ void fm1_timer5_irq(void)
     owed = 0;
 }
 extern void isr_timer5(void);
+extern void isr_timer5_ram(void);                       /* (Beat It 1.5) the same entry in RAM (fm1_isr.S, after Optimist) */
+#if FELUCCA_CPU1
+#define TIMER5_ISR isr_timer5_ram                       /* (two-core builds: the entry fetched from RAM, as Optimist's) */
+#else
+#define TIMER5_ISR isr_timer5
+#endif
 
 UI_SMALL static void timer5_start(void)                 /* OSC /4 = 6 MHz, PRD 600 -> 10 kHz */
 {
@@ -119,7 +125,7 @@ UI_SMALL static void timer5_start(void)                 /* OSC /4 = 6 MHz, PRD 6
      * MIDI rings are single-producer / single-consumer). Below it, a tick waited for the render
      * and the column it had lit stayed on longer: the LEDs shimmered, beating against the audio
      * blocks (1378 / s against the 909 / s scan) */
-    fm1_timer5_start(isr_timer5, 4);
+    fm1_timer5_start(TIMER5_ISR, 4);
 }
 
 UI_SMALL static void hexs(char *b, uint32_t v)
@@ -236,6 +242,12 @@ UI_SMALL static void fm1_main(void)
     cpu1_boot();                                        /* the second core: at power-on, before the audio and the
                                                          * timers (X0X: started later it never reaches its entry);
                                                          * if it does not answer, SLOOP runs on one core (cpu1.c) */
+#if FELUCCA_BLE
+    ble_midi_init();                                    /* (Beat It) the stored radio calibration read; radio OFF */
+    ble_midi_boot(&bt_rx, &bt_tx);                                    /* (1.5) BT MIDI was ON at power-off: the radio starts now, IRQs
+                                                         * still off, before audio_init and the timers run, core 1 already
+                                                         * running (M-VAVE's / Optimist's order); its jobs 400 ms later */
+#endif
     audio_init();
 #if FELUCCA_CDC
     usb_cdc_on = usb_serial;                            /* menu USB SERIAL (persist_boot read it): before USB starts */
@@ -246,9 +258,6 @@ UI_SMALL static void fm1_main(void)
     usb_start();
 #if FELUCCA_UART
     uart_midi_init();
-#endif
-#if FELUCCA_BLE
-    ble_midi_init();                                    /* (Beat It) the stored radio calibration read; radio OFF */
 #endif
     timer5_start();
     fm1_guard_lock_top();
@@ -378,11 +387,20 @@ UI_SMALL static void fm1_main(void)
 UI_SMALL void fm1_cstart(void)
 {
     uint32_t *s, *d, p3, src, wdt, boot_mode;
+#if BEATIT_STOCK_SUPPLY
+    uint32_t sup_err;
+#endif
     fm1_cpu1_halt();                            /* (2.8.3, X0X 20353c9) a second core left running by the reset would
                                                  * read the RAM cleared below (fm1_sys.h: registers only) */
     fm1_time_init();
+#if BEATIT_STOCK_SUPPLY
+    sup_err = fm1_supply_stock_seq();           /* (Beat It 1.5 STOCK SUPPLY test build) M-VAVE's whole supply start-up:
+                                                 * the 1.4 V rail onto the DC-DC, the same 1.60 V / 1.38 V, the BT DC-DC,
+                                                 * the 2.6 V detector (hal/fm1_supply_stock.h); a wrong read-back: one core */
+#else
     fm1_supplies_stock();                       /* (2.7) VDC14 1.60 V, SYSVDD 1.38 V, as M-VAVE's firmware: both cores
                                                  * read the flash and SRAM right on every unit (fm1_sys.h) */
+#endif
     fm1_reset_reason();
     p3 = fm1_boot.p3_rst;
     src = fm1_boot.rst_src;
@@ -413,6 +431,10 @@ UI_SMALL void fm1_cstart(void)
     fm1_boot.p3_rst = (uint8_t)p3;
     fm1_boot.rst_src = src;
     fm1_boot.wdt_con = (uint8_t)wdt;
+#if BEATIT_STOCK_SUPPLY
+    beatit_supply = (uint8_t)(0x80u | sup_err);  /* (after the .bss clear) bit 7 applied, bits 0-3 FM1_SUP_* */
+    beatit_supply_regs = fm1_sup_regs();
+#endif
 #if FELUCCA_OTA
     if (boot_mode == BOOT_RECOVERY || recovery_key())
         recovery_main();

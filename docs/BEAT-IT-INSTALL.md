@@ -1,103 +1,92 @@
-# Beat It 1.4 install guide
+# Beat It 1.5 install guide
 
-Beat It 1.4 lets a computer or app ask the FM-1 how its Bluetooth is doing, and comes with a free Linux script that runs the whole Bluetooth test for you and saves a log. It builds cleanly and passes its tests in a simulator, but **it has never run on a real FM-1, and nothing here has ever transmitted over a real radio.** Bluetooth may still not work on the hardware. Treat it as experimental and back up first.
+Beat It 1.5 keeps both processor cores running while Bluetooth is on. It does this by starting the radio in the order Optimist found stops the Bluetooth plus two-core crash. 1.5 builds cleanly and passes its tests in a simulator, but **it has never run on a real FM-1, and nothing here has ever transmitted over a real radio.** Treat it as experimental, and back up before you install it.
 
-## What's new in 1.4
+## What's new in 1.5
 
-- **BT STATUS over Bluetooth.** When a connected computer or app sends the SysEx message `F0 7D 42 49 01 F7`, the FM-1 answers with one SysEx message. It holds what BT CONNECTION shows (RADIO CAL, IN, OUT, LOST, the RESET DURING step) plus what the screen can't show: the connection interval, timeout, MTU and data length the link actually agreed on, and whether it's encrypted. It answers only while BT MIDI RECEIVE or SEND is on. It's never played and doesn't count toward IN or OUT. Every other SysEx over Bluetooth is still ignored.
-- **A Linux Bluetooth test script:** `tools/beatit-bt-test.sh`. It finds the FM-1, connects, and steps through receive, send, stuck notes, clock out, clock in and a 600-note stress test. With 1.4 it checks the FM-1's own counts against what was sent, and writes everything to a log file you can send back. It's free and needs no account or subscription. See [BEAT-IT-LINUX-BT-TEST.md](BEAT-IT-LINUX-BT-TEST.md).
-- **Version:** the start-up screen and ABOUT say "BEAT IT 1.4 BT".
-- Nothing else changed from 1.3. Notes, the clock both ways, stuck-note handling, the queue and the calibration backup all work the same.
+- **Bluetooth no longer shuts off the second core.** In 1.4, turning Bluetooth on stopped the second core until you restarted, so heavy patches could glitch and ABOUT said 1 CORE. In 1.5, ABOUT should stay at 2 CORES with Bluetooth on.
+- **Bluetooth stays on across a restart.** If BT MIDI RECEIVE or SEND is on when you leave the menu, the setting is saved, and the radio starts at the next power-on, before the sound starts. This is the same order Optimist uses. The safest way to use Bluetooth is: turn it on, leave the menu, power off and on, then play.
+- **Turning Bluetooth on while the FM-1 is running still works.** The second core keeps running, and it gets no audio work for 400 ms after the radio starts.
+- **Saving to flash pauses the second core safely.** It waits in RAM during each flash write, and the audio interrupt code now runs from RAM too.
+- **No boot loop.** If the FM-1 reset in the middle of starting the radio, the next power-on skips Bluetooth and saves it as OFF. The RESET DURING line in the BLUETOOTH menu shows the step where it hung.
+- **BT STATUS reports 1.5.** The reply now says version 1.5, whether the radio started at power-on, and whether the second core was stopped after a fault since power-on. The Linux test script reads both, and on 1.5 its status step fails if the second core is reported stopped.
+- **Screen messages that were cut off now fit.** The message bar holds 23 characters, and four messages were longer, so their ends were cut off: "CAL BACKED UP IN SETTINGS" is now "CAL SAVED IN SETTINGS", "2ND CORE OFF UNTIL RESTART" is now "1 CORE UNTIL RESTART", "NUDGE, LOCKS, FILL CLEARED" is now "NUDGE/LOCK/FILL CLEARED", and the new Bluetooth message reads "BT STAYS ON AT POWER-ON". A new test checks every message in the firmware against that limit.
+- **Version:** the start-up screen and ABOUT say "BEAT IT 1.5 BT".
 
-## From 1.3
+## The STOCK SUPPLY test build (optional)
 
-- **The FM-1 can send its clock over Bluetooth.** Menu > MIDI > CLOCK OUT used to be OFF or OUT (USB only). It now has four choices: **OFF**, **USB**, **BT** and **USB+BT**.
-  - With BT or USB+BT, a phone or DAW app connected over Bluetooth gets the FM-1's tempo (24 pulses a beat), plus START when you press play and STOP when you stop.
-  - Each clock pulse carries the time it was made, so the receiving app can time it by when it was sent, not by when Bluetooth delivered it.
-  - It only goes out over Bluetooth while **BT MIDI SEND** is on and an app is connected. With SEND off, USB+BT acts as USB.
-  - **If an app connects while the FM-1 is already playing,** it gets START straight away, and USB isn't restarted. If the app disconnects, USB carries on as normal.
-  - Like before, the FM-1 only sends a clock when it's the master (CLOCK IN set to INT). If it's following a clock, it never sends one back, so there's no loop through a phone.
-  - Projects that had CLOCK OUT set to OUT open with it set to USB, so nothing changes for them.
-- **Turning BT MIDI SEND off no longer leaves notes stuck on the phone.** In 1.2, switching SEND off just went quiet, so any note the FM-1 was holding stayed on in the phone app, and an app following the Bluetooth clock kept running. Now, before it goes quiet, it sends a note-off for each note still on (ALL NOTES OFF for a channel with more than four), and STOP if the Bluetooth clock had started the app. This happens while BT MIDI RECEIVE stays on. Turning both off closes the link completely.
-- **A slow link drops the right messages.** When the phone can't keep up (for example on a long connection interval with the clock going out as well), the outgoing queue keeps its last 16 places for messages that end a sound: note-offs, sustain pedal up, ALL NOTES OFF and the clock's STOP. So a congested link drops a clock pulse or a new note, not the note-off that would leave a note hanging.
-- **LOST now counts both ways.** The line under BT CONNECTION shows **LOST (n)** in amber when messages couldn't be sent as well as when they couldn't be received.
-- **Fix: CLOCK IN = BT was missing from 1.2 on the FM-1.** In the 1.2 firmware file, the Bluetooth switch was set too late in the build, so the menu was built as if Bluetooth didn't exist. CLOCK IN only offered INT, USB and TRS, and you couldn't choose BT. The simulator tests turned Bluetooth on themselves, so they didn't catch it. 1.3 sets it in the right place, and the build now stops with an error if a Bluetooth build is missing the BT choices for CLOCK IN or CLOCK OUT. Nothing else was affected: Bluetooth notes in and out were built in 1.2 as intended.
+There's a second installer, **Beat-It-1.5-STOCK-SUPPLY-test-installer.html**. It's the same firmware, plus the FM-1's own power start-up as M-VAVE's firmware does it. It moves the 1.4 V rail from its linear regulator to the switching one, sets up the Bluetooth power stage, and turns on the low-voltage detector. Optimist's notes say the boot loader leaves the rail on the linear regulator, and that the second core crashed the first one there. With the stock order, every Bluetooth plus two-core boot that used to crash within 2 to 60 seconds ran three times for 180 seconds without a crash, on Optimist's unit.
+
+- Optimist marks the voltages "at your own risk": they're above the chip datasheet's table, and heat and battery effects weren't measured.
+- It shows "BEAT IT 1.5 BT SUP" so you always know which build is on the synth.
+- If the power settings don't read back correctly, it never starts the second core that boot. The FM-1 runs on one core.
+- **Try the normal 1.5 first.** Only use this build if the normal one crashes with Bluetooth on.
 
 ## What hasn't changed
 
-- Drums, both FM engines (DIGITAL and FM6), the purple-and-black theme, the BEAT IT start-up screen, the full-screen scope, the SCOPE VIEW presets (FULL SCREEN, NORMAL, OFF), SCOPE COLOUR, and the dedicated MIDI and BLUETOOTH menus.
-- Everything from 1.3 and 1.2: following a Bluetooth clock (CLOCK IN = BT, now actually in the menu), the RESET DURING line, the IN and OUT counts, and the menu updating by itself.
-- **Bluetooth is off at every power-on.** It only starts when you turn on BT MIDI RECEIVE or SEND.
-- **Turning Bluetooth on stops the second processor core until you restart.** Heavy patches may glitch. ABOUT shows "1 CORE" while this is in effect.
+- **Drums and both FM engines (DIGITAL and FM6) are still in.** I didn't remove the FM engine. Optimist runs all of its engines on two cores with Bluetooth on, so the fix is the start-up order, not fewer engines.
+- The purple-and-black theme, the BEAT IT start-up screen, the full-screen scope and SCOPE VIEW, SCOPE COLOUR, and the MIDI and BLUETOOTH menus.
+- Everything from 1.2 to 1.4: the Bluetooth clock both ways, stuck-note handling when SEND turns off, the outgoing queue, LOST counts, BT STATUS and the Linux test script.
 - **The fourth user sample slot (USR4) stays locked.** It sits on the memory that holds your radio calibration.
-- **Radio calibration:** Beat It still never writes to the stock calibration area, backs it up to both settings copies when it finds it, uses the backup if it's lost, and never makes calibration up. If **RADIO CAL** says **MISSING**, Bluetooth can't start on this firmware, but everything else works. Your earlier installs may already have erased it, and nothing can bring it back.
-- **Going back to 1.3:** nothing to do; 1.4 saves settings exactly as 1.3 does.
-- **Going back to 1.2:** 1.3 and later store the CLOCK OUT BT choice in a spare bit next to the REMOTE setting. If you install 1.2 again after using CLOCK OUT BT, REMOTE goes back to OFF once. Set it again if you use it.
+- **Radio calibration:** Beat It never writes to the stock calibration area. It backs it up to both settings copies, uses the backup if the original is lost, and never makes one up. If **RADIO CAL** says **MISSING**, Bluetooth can't start, but everything else works.
+- **Going back to 1.4 is safe.** 1.5 saves Bluetooth on or off in two spare bits that 1.4 ignores. On 1.4, Bluetooth just starts off at every power-on again.
+
+## Before you install
+
+1. **Back up.** Open SLOOP's [web editor](https://isod89.github.io/sloop-fm1/webapp/editor/) in Chrome or Edge, go to Song & sections, and save a backup. Check that the backup file is actually on your PC. We haven't confirmed a backup of your FM-1 yet, so this step matters.
+2. **Write down what ABOUT says** (Menu, then SYSTEM, then ABOUT) and, if you're on Beat It already, what RADIO CAL says.
+3. **Give the FM-1 back to Windows.** If it's attached to Ubuntu, run `usbipd detach --busid 1-2` in PowerShell, then `usbipd list`, and check it no longer says Attached.
+4. Plug it straight into the PC, not through a hub, and close any other app that uses MIDI.
 
 ## Install it from a Windows PC
 
-You need Chrome or Edge and a USB data cable. You don't need Linux or any build tools.
+1. Save **Beat-It-1.5-installer.html** to your PC and double-click it so it opens in Chrome or Edge.
+2. Wait for the page to say "Beat It 1.5", then press **INSTALL**. Allow MIDI access when asked, and wait for "Done". The page says SLOOP in places because it's SLOOP's installer with Beat It packed inside.
+3. The FM-1 restarts on the BEAT IT screen. Unplug it and plug it back in once so Windows finds its USB audio.
+4. Open **Menu > BLUETOOTH** and check **RADIO CAL**. STOCK or BACKUP means Bluetooth can try to start. On STOCK, leave the FM-1 on for a few seconds until it says BACKED UP.
 
-1. **Back up first.** If your FM-1 is on SLOOP or Beat It, use SLOOP's editor and choose Backup. If it's on the official firmware, use M-VAVE's [FM-1 Workbench](https://open.m-vave.com/fm1-workbench).
-2. Save **Beat-It-1.4-installer.html** to your PC and double-click it so it opens in Chrome or Edge.
-3. Plug the FM-1 straight into the PC, not through a hub. Close any other app that uses MIDI.
-4. Wait for the page to say "Beat It 1.4", then press **INSTALL**. Allow MIDI access when asked, and wait for "Done". The page says SLOOP in places because it's SLOOP's installer with Beat It packed inside.
-5. The FM-1 restarts on the BEAT IT screen. Unplug it and plug it back in once so Windows finds its USB audio.
-6. Open **Menu > BLUETOOTH** and check **RADIO CAL** first. STOCK or BACKUP means Bluetooth can try to start. On STOCK, leave the FM-1 on for a few seconds until it says BACKED UP.
+**Beat-It-1.5.fwsc** is the same firmware on its own, for SLOOP's Python installer or the Firmware Hub. All the 1.5 files, the STOCK SUPPLY test build included, are on the [v1.5 release](https://github.com/epidex/beat-it/releases/tag/v1.5). Earlier versions are on the [Releases](https://github.com/epidex/beat-it/releases) page if you need to go back.
 
-**Beat-It-1.4.fwsc** is the same firmware on its own, for SLOOP's Python installer or the Firmware Hub. GitHub's automatic build also builds 1.4 from the same code, and its copies are on the [v1.4 release](https://github.com/epidex/beat-it/releases/tag/v1.4) of your repository, with **Beat-It-1.4-linux-bt-test.tar.gz**. They aren't byte-for-byte identical to the files here, because the build machine is different. Use either set, not a mix.
+## First test, in order
 
-## First Bluetooth test, step by step
+Each step tells us something, even if it fails. Stop at the first crash and write down what you saw.
 
-**If you have a Linux computer with Bluetooth,** the script does all of this for you and saves a log: see [BEAT-IT-LINUX-BT-TEST.md](BEAT-IT-LINUX-BT-TEST.md). Otherwise, with a phone, do these in order. Each one tells us something, even if it fails.
+1. **Without Bluetooth:** play a busy pattern for a minute. Open ABOUT and check it says 2 CORES. This is your baseline.
+2. **Turn on BT MIDI RECEIVE and SEND,** then leave the menu. You should see "BT STAYS ON AT POWER-ON".
+3. **Power off and on.** It should boot to the BEAT IT screen with sound working, and BT CONNECTION should say ADVERTISING. ABOUT should still say 2 CORES.
+4. **Connect from a Bluetooth MIDI app on your phone** (look for "BEAT IT" and four characters, and connect inside the app). Play notes from the phone and check that IN counts up and the FM-1 plays them.
+5. **The real test:** with the phone connected, play a heavy pattern for at least 3 minutes. That's the length of Optimist's clean runs. 1.4 needed to stop the second core here; 1.5 shouldn't need to. Check ABOUT again afterwards.
+6. **Turn Bluetooth on while it's running:** turn both BT settings off, power off and on, start playing, then turn RECEIVE back on. It should keep playing without a glitch.
+7. **If you have the Linux laptop handy,** the test script does the Bluetooth steps for you and saves a log. Its status line should say Beat It 1.5, that the radio started at power-on, and that the second core is running.
 
-1. **RADIO CAL:** write down what it says (STOCK, BACKUP or MISSING). If it's MISSING, stop here. Bluetooth can't start.
-2. **Turn on BT MIDI RECEIVE.** Watch BT CONNECTION for about 10 seconds.
-   - **ADVERTISING:** the radio started.
-   - **NO RF CAL:** there's no calibration.
-   - **The FM-1 freezes or restarts:** power it off and on, open the BLUETOOTH menu, and write down the **RESET DURING** line. That's the step where it hung.
-3. **On your phone,** open a Bluetooth MIDI app and look for "BEAT IT" followed by four characters. Connect from inside the app, not from the phone's Bluetooth settings.
-   - **If the phone can't see it** while BT CONNECTION says ADVERTISING, the radio is on but not reaching the phone. That's a radio or calibration problem, not a menu problem.
-4. **When BT CONNECTION says CONNECTED,** play a few notes from the phone. The line under it should count up (IN 1, IN 2...) and the FM-1 should play them.
-   - **If IN counts up but there's no sound,** check the track's MIDI channel in the MIDI menu.
-5. **To test sending,** turn on BT MIDI SEND and play pads on the FM-1. OUT should count up and the phone app should show notes arriving.
-6. **To test stuck notes:** hold a pad so a note is sounding on the phone, then turn BT MIDI SEND off. The note should stop on the phone.
-7. **To test sending the clock:** turn SEND back on, set Menu > MIDI > CLOCK IN to **INT** and CLOCK OUT to **BT**, then open an app that can follow MIDI clock over Bluetooth. Press play on the FM-1: the app should start and match the FM-1's TEMPO. Press stop: it should stop.
-8. **To test following a clock:** set CLOCK IN to **BT**, then press play in a DAW app that sends MIDI clock over Bluetooth. TEMPO should change to match the app, and the sequencer should start and stop with it.
-
-Send me what each step showed: the RADIO CAL value, the BT CONNECTION value, any RESET DURING line, the IN and OUT counts, and any LOST count. A photo of the screen works. That's enough to work out the next fix.
+Send me what each step showed: ABOUT (2 CORES or 1 CORE), RADIO CAL, BT CONNECTION, any RESET DURING line, the IN and OUT counts, and how long it played before any crash. A photo of the screen works.
 
 ## If something goes wrong
 
-- **The FM-1 freezes or crashes with Bluetooth on:** power it off and on. Bluetooth starts off again, so it should boot normally. Check the RESET DURING line, then leave Bluetooth off.
+- **It freezes or restarts while starting Bluetooth:** power it off and on. 1.5 skips Bluetooth at that power-on and saves it as OFF. Check the RESET DURING line.
+- **It crashes while playing with Bluetooth on:** Bluetooth is still saved ON, so turn it off in the menu right after the next boot. If it crashes too fast to reach the menu, hold **OCT-** while you turn it on for USB rescue, and install Beat It 1.4 again: 1.4 always starts with Bluetooth off. Then tell me how long it ran, and we can try the STOCK SUPPLY build.
 - **The install stops partway:** open the installer page again and press INSTALL. It picks up where it left off.
-- **The FM-1 won't start:** hold **OCT-** while you turn it on to enter USB rescue mode. Then run the installer again (1.4, 1.3, or **Beat-It-1.0-installer.html** for the build without Bluetooth), or use "Back to official" on [The Firmware Hub](https://thefirmwarehub.com/).
-- **Going back to the official firmware:** use M-VAVE's **M-UPGRADE** (m-vave.com, Downloads, PC Software) with the official FM-1 firmware file. If M-UPGRADE can't find the FM-1, use "Return to the official firmware" on [Clipper's installer page](https://isod89.github.io/clipper-fm1/webapp/installer/) with that same file.
-- **Worst case:** the community [unbricker tool](https://github.com/Quixotic7/MvaveFM1Unbricker) restores the FM-1 over USB.
+- **The FM-1 won't start:** hold **OCT-** while you turn it on (USB rescue), then run an installer again.
+- **Back to official firmware:** use M-VAVE's M-UPGRADE with the official FM-1 file. If it can't find the synth, use Return to the official firmware on [Clipper's installer page](https://isod89.github.io/clipper-fm1/webapp/installer/).
+- **Worst case:** the community [unbricker](https://github.com/Quixotic7/MvaveFM1Unbricker).
 
 ## What was tested
 
-All of this ran in a simulator on my Linux workspace. None of it ran on a real FM-1, and no radio was used.
+Everything below ran on my computer, in the simulator and host tests. None of it ran on a real FM-1. The full log is in beat-it-1.5-test-log.txt.
 
-- **Firmware build:** built cleanly with no warnings. The firmware is 398,016 bytes, 856 more than 1.2, and uses 65,612 of 98,304 bytes of RAM. It still fits.
-- **Installer page:** the firmware packed inside it matches the .fwsc file byte for byte.
-- **Bluetooth and calibration:** every Bluetooth and calibration check passed, with no failures, including 24 new ones for 1.3. They cover:
-  - CLOCK OUT BT: 24 pulses a beat at 120 BPM to Bluetooth only, START then the first pulse when play starts, each pulse stamped with its time and in order, STOP when play stops, nothing on USB
-  - CLOCK OUT USB+BT: an app that connects mid-song gets START without USB restarting; one that leaves is dropped without a STOP into nowhere; one that comes back gets START again
-  - switching CLOCK IN to follow a clock while playing: STOP to both, then nothing sent
-  - SEND off: no clock goes to Bluetooth
-  - SEND off while notes are held: the right note-offs, ALL NOTES OFF for a busy channel, STOP, and nothing after; SEND back on while playing sends START again
-  - a flooded queue keeps room for note-offs and sustain-pedal-up, counts LOST, and shows it in amber
-  - CLOCK OUT saved and loaded back correctly for all four choices, with REMOTE unchanged
-  - the CLOCK OUT menu drawn and checked showing BT and USB+BT (picture included)
-- **The whole suite:** 72 test groups ran, the same as 1.2. The only failures are the same ones that fail on Beat It 1.0, 1.1 and 1.2, all for sounds Beat It removed: the sample-chop click test, the switch to the SAMPLE engine, and the reference renders of removed presets. Nothing new failed in the drums, the FM engines, the sequencer, MIDI, the menus, the settings or the installer.
+- **Both builds compile,** and building again gives the same file byte for byte. The firmware is 399,248 bytes and uses 65,644 of 98,304 bytes of RAM. Both installers carry exactly the firmware file they're named for.
+- **2,519 checks passed.**
+- **Bluetooth start-up order:** BT saved OFF means no radio at power-on. BT saved ON means it starts at power-on with RECEIVE and SEND on. The second core keeps running and gets no job for 400 ms after a start. A reset during a start means no retry, and Bluetooth is saved OFF.
+- **BT STATUS:** it reports version 1.5, flags a radio started at power-on, and still flags a stopped second core. The Linux test script passes all of its simulated runs, including a new "1.5, everything works" run. It still catches dropped messages and a wrong tempo.
+- **Second core:** every way of splitting the sound work across the two cores passes, including a slow, erratic second core and one that times out. ThreadSanitizer found no race.
+- **Screen messages:** all 135 fixed messages fit the 23-character bar.
+- **The installer** passes its test against a simulated FM-1.
 
-## What only your FM-1 can tell us
+Some checks still fail, and they fail exactly the same way as in the 1.1 and 1.4 test runs, so 1.5 didn't cause them: five sample-chop click checks, one track-switch check, four silent GRAIN presets in the stored test renders, and the combined render-split test because of those renders. None of them involve Bluetooth or the second core's start-up.
 
-- whether the radio starts on the real chip and a phone can see "BEAT IT"
-- whether notes and clock arrive reliably both ways, and how much delay you can hear
-- whether the phone app keeps steady time from the FM-1's Bluetooth clock
-- whether one core is enough for your patches with Bluetooth on
-- whether your unit still has its stock radio calibration
+## What only your FM-1 can show
 
-The code changes, applied to Beat It 1.2, are in **beat-it-1.3-bluetooth.patch**. **beat-it-1.3-test-log.txt** has the full test output.
+- Whether Bluetooth plus two cores runs without crashing on your unit
+- Whether the radio starts at power-on and your phone can see and connect to it
+- What RADIO CAL says after the install
+- Whether the STOCK SUPPLY build is needed at all

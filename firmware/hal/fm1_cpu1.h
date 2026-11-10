@@ -49,10 +49,12 @@ typedef struct {
     volatile uint32_t job, arg;                 /* core 0: job + 1 hands fn(arg) over */
     void (*volatile fn)(uint32_t);
     volatile uint32_t check;                    /* FM1_C1_CHECK of fn, arg and job */
-    uint32_t pad0[12];
+    volatile uint32_t park;                     /* (Beat It 1.5) core 0: a flash write/erase is coming, wait in RAM */
+    uint32_t pad0[11];
     volatile uint32_t alive, done;              /* core 1: started; the last job it finished */
     volatile uint32_t bad, bad_job, bad_done, bad_fn;   /* jobs it would not run: how many, the last one */
-    uint32_t pad1[10];
+    volatile uint32_t parked;                   /* (Beat It 1.5) core 1: idle in RAM, its cache quiet, until park clears */
+    uint32_t pad1[9];
 } fm1_c1_mb_t;
 static fm1_c1_mb_t fm1_c1_mb __attribute__((aligned(64)));
 volatile uint32_t fm1_c1_trace;                 /* breadcrumbs (fm1_cpu1.S, fm1_c1_main) */
@@ -83,7 +85,23 @@ void __attribute__((section(".c1_text"), noreturn, used)) fm1_c1_main(void)
     fm1_c1_mb.alive = 1;
     FM1_C1_SYNC();
     for (;;) {
-        uint32_t j = fm1_c1_mb.job;
+        uint32_t j;
+        if (fm1_c1_mb.park) {                   /* (Beat It 1.5, after Optimist's fm1_dual_park_check): core 0 is about
+                                                 * to write or erase the flash. Wait here, in RAM, for this core's cache
+                                                 * to go idle (CACHE_CON bit 14, as M-VAVE's firmware polls it), say so,
+                                                 * and spin in RAM until core 0 is done: no flash fetch meanwhile */
+            uint32_t k = 100000u;
+            while (!(*(volatile uint32_t *)0x1EEE008u & 0x4000u) && --k)
+                ;
+            fm1_c1_mb.parked = 1;
+            FM1_C1_SYNC();
+            while (fm1_c1_mb.park)
+                FM1_C1_SYNC();
+            fm1_c1_mb.parked = 0;
+            FM1_C1_SYNC();
+            continue;
+        }
+        j = fm1_c1_mb.job;
         FM1_C1_SYNC();
         if (j == done)
             continue;
@@ -173,6 +191,41 @@ static inline int fm1_cpu1_run(void (*fn)(uint32_t), uint32_t arg)
     fm1_c1_mb.job = job;
     FM1_C1_SYNC();
     return 1;
+}
+
+/* (Beat It 1.5) around a flash write or erase, interrupts off (felucca.c FM1_FLASH_ENTER / LEAVE). Optimist found
+ * a write with core 1 merely spinning in RAM could still crash a unit; it parks core 1 first. 1 = parked (pass it
+ * to fm1_cpu1_unpark); 0 = core 1 was not running, or did not answer in 200 us: then it is held and barred until
+ * power-off (one core, the Beat It fallback) before the flash is touched */
+static uint32_t fm1_c1_parks, fm1_c1_park_fails;
+static int fm1_cpu1_park(void)
+{
+    uint32_t t0;
+    if (!fm1_c1_on)
+        return 0;
+    fm1_c1_mb.park = 1;
+    FM1_C1_SYNC();
+    t0 = FM1_C1_T4;
+    while (!fm1_c1_mb.parked) {
+        FM1_C1_SYNC();
+        if (FM1_C1_T4 - t0 > 24u * 200u) {     /* 200 us */
+            fm1_c1_mb.park = 0;
+            fm1_cpu1_hold();
+            fm1_cpu1_bar();
+            fm1_c1_gave_up = 4;
+            fm1_c1_park_fails++;
+            return 0;
+        }
+    }
+    fm1_c1_parks++;
+    return 1;
+}
+static void fm1_cpu1_unpark(int parked)
+{
+    if (!parked)
+        return;
+    fm1_c1_mb.park = 0;
+    FM1_C1_SYNC();
 }
 
 /* 0 = done; -1 = it read a wrong job or did not finish in time: core 1 is held from now on (the

@@ -11,6 +11,7 @@
 #pragma once
 typedef void (*cpu1_job_t)(uint32_t);
 static int cpu1_run(cpu1_job_t fn, uint32_t arg);
+static void cpu1_hold_jobs_ms(uint32_t ms);   /* (Beat It 1.5) no job for core 1 for ms (after the radio starts) */
 static int cpu1_wait(void);
 static int cpu1_on(void);
 /* the render units core 1 gets (fx.c units_split): -1 the firmware's share (the last part and the drums), else a

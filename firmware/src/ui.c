@@ -2,7 +2,11 @@
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* Felucca user interface. Four columns map to KNOB 1..4. Rendering is lazy:
  * every element remembers what it last drew and is redrawn only on change. */
-#define BEATIT_VERSION "BEAT IT 1.4 BT"  /* (Beat It) shown on the boot screen and in ABOUT; FELUCCA_VERSION stays SLOOP's (the web tools read it) */
+#define BEATIT_VERSION "BEAT IT 1.5 BT"  /* (Beat It) shown on the boot screen and in ABOUT; FELUCCA_VERSION stays SLOOP's (the web tools read it) */
+#if BEATIT_STOCK_SUPPLY
+#  undef BEATIT_VERSION
+#  define BEATIT_VERSION "BEAT IT 1.5 BT SUP"   /* (1.5) the opt-in STOCK SUPPLY test build says so everywhere */
+#endif
 #ifndef FELUCCA_VERSION
 #define FELUCCA_VERSION "SLOOP 2.8.5"  /* the beat machine firmware for the FM-1 (based on Felucca) */
 #endif

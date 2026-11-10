@@ -177,11 +177,26 @@ static void ble_diag_put14(uint8_t *d, uint32_t v)
 
 /* the reply's 32 data bytes:
  *   0 layout (1)   1,2 Beat It version (1, 4)   3 RADIO CAL (0 MISSING, 1 STOCK, 2 BACKUP)
+ *   2 minor version (1.4: 4, 1.5: 5)
  *   4 flags: 1 RECEIVE on, 2 SEND on, 4 a central has the notifications on, 8 encrypted, 16 the second core stopped,
- *            32 SEND OFF's note-offs still draining
+ *            32 SEND OFF's note-offs still draining, 64 (1.5) the radio was started at power-on
  *   5 the start-up step the last run hung at (0 none)   6 CLOCK IN (G_SYNC)   7 CLOCK OUT (G_CLKOUT)
  *   8..11 IN   12..15 OUT   16..19 LOST in   20..23 LOST out   (BT CONNECTION's counts, 28 bits each)
  *   24,25 connection interval (x 1.25 ms)   26,27 supervision timeout (x 10 ms)   28,29 ATT MTU   30,31 LL data length */
+static uint8_t ble_boot_started, ble_boot_skipped;  /* (1.5) ble_midi_boot: the radio started at power-on / was skipped */
+
+/* (1.5) flag 16: the second core is not running for us. 1.4 stopped it for the radio (ble_cpu1_down); 1.5 keeps it, so
+ * this now also reports a core 1 the HAL held after a fault (a wrong job, a late job, a failed park, barred): the
+ * thing to look for if Bluetooth and two cores ever disagree on a real FM-1 */
+static int ble_core2_down(void)
+{
+#if FELUCCA_CPU1
+    return ble_cpu1_stopped || fm1_c1_gave_up != 0;
+#else
+    return ble_cpu1_stopped;
+#endif
+}
+
 static void ble_diag_reply(uint8_t *m)
 {
     uint8_t *d = m + 5;
@@ -189,10 +204,11 @@ static void ble_diag_reply(uint8_t *m)
     m[4] = 0x02u;
     d[0] = 1u;
     d[1] = 1u;
-    d[2] = 4u;
+    d[2] = 5u;                                  /* (1.5) */
     d[3] = (uint8_t)(ble_rf_src & 0x7Fu);
     d[4] = (uint8_t)((ble_rx_on ? 1u : 0u) | (ble_tx_on ? 2u : 0u) | (ble_out_on ? 4u : 0u) |
-                     (ble_ll_encrypted() ? 8u : 0u) | (ble_cpu1_stopped ? 16u : 0u) | (ble_tx_drain ? 32u : 0u));
+                     (ble_ll_encrypted() ? 8u : 0u) | (ble_core2_down() ? 16u : 0u) | (ble_tx_drain ? 32u : 0u) |
+                     (ble_boot_started ? 64u : 0u));
     d[5] = (uint8_t)(ble_hung_step & 0x7Fu);
     d[6] = (uint8_t)(song.g[G_SYNC] & 0x7F);
     d[7] = (uint8_t)(song.g[G_CLKOUT] & 0x7F);
@@ -469,12 +485,17 @@ static uint8_t ble_midi_addr(uint8_t a[6])
 #define BLE_STEP(s) ((void)0)
 #endif
 
-/* The second core stops for the rest of the session before the radio's start-up program runs. Optimist (whose stack this
- * is) found BLE plus a running second core crashed the FM-1 within 2-60 s until it copied stock's start-up order (its
- * docs/DUAL-CORE.md), and it holds the second core while the radio starts at run time, with a rule that keeps it
- * stopped for the boot; Beat It does the safe one of those: held with SLOOP's own fallback (the one cpu1_wait uses after
- * a timeout), not restarted, until the next power-on. Interrupts off: the audio ISR posts and waits for its job inside
- * the ISR, so no job is in flight here. One core renders everything from here (as 2ND CORE OFF). */
+/* (1.4, kept for BEATIT_BT_KEEP_CPU1=0 builds) The second core stops for the rest of the session before the radio's
+ * start-up program runs: held with SLOOP's own fallback, not restarted, until the next power-on. Interrupts off: the
+ * audio ISR posts and waits for its job inside the ISR, so no job is in flight here.
+ * (1.5) Optimist found that BLE plus a running second core crashed the FM-1 within 2-60 s until it copied stock's
+ * start-up order (docs/DUAL-CORE.md: 3 x 180 s clean after, on its unit), and its current firmware keeps core 1 running
+ * when the radio starts at run time too. 1.5 does that: the radio starts at power-on when BT MIDI was ON (ble_midi_boot,
+ * before the audio), or at run time with core 1 left running, and no job goes to core 1 for 400 ms after (cpu1.c
+ * cpu1_hold_jobs_ms, Optimist's DUAL_STOCK_HOLD_MS). A crash beside core 1 still bars it till power-off (fm1_fault). */
+#ifndef BEATIT_BT_KEEP_CPU1
+#define BEATIT_BT_KEEP_CPU1 1
+#endif
 static void ble_cpu1_down(void)
 {
 #if FELUCCA_CPU1
@@ -495,7 +516,11 @@ static int ble_radio_start(void)                /* the first time Bluetooth is w
         return 1;
     if (!ble_radio_ok())
         return 0;
+#if BEATIT_BT_KEEP_CPU1
+    cpu1_hold_jobs_ms(400);                     /* (1.5) core 1 keeps running; no job for it for 400 ms after the start */
+#else
     ble_cpu1_down();
+#endif
 #if BLE_HW_WL82
     fm1_ble_crumb_irqs = 0;
 #endif
@@ -507,6 +532,9 @@ static int ble_radio_start(void)                /* the first time Bluetooth is w
 #endif
     BLE_STEP(STARTED);
     ble_up = 1;
+#if BEATIT_BT_KEEP_CPU1
+    cpu1_hold_jobs_ms(400);                     /* (the 400 ms count from the end of the start-up program) */
+#endif
     return 1;
 }
 
@@ -564,6 +592,26 @@ static void ble_midi_set(uint8_t rx, uint8_t tx)
         BLE_STEP(RUNNING);
     else
         BLE_STEP(SET_OFF);
+}
+
+/* (1.5) at power-on, after ble_midi_init, interrupts still off, before the audio and the timers start and after core 1
+ * was started (main.c): BT MIDI RECEIVE / SEND were saved ON (project.c, REMOTE's byte bits 5-6), so the radio starts
+ * now, in M-VAVE's order. Not when the last run reset in the middle of a radio start (ble_hung_step: no boot loop; the
+ * menu says it and BT stays OFF until it is turned on again) or this unit has no stored radio calibration */
+static void ble_midi_boot(uint8_t *rx, uint8_t *tx)
+{
+    if (!*rx && !*tx)
+        return;
+    if (ble_hung_step || !ble_radio_ok()) {
+        *rx = *tx = 0;
+        ble_boot_skipped = 1;
+#if FELUCCA_FLASH
+        settings_later = 1;                     /* (1.5) saved OFF once idle: a power cycle does not retry it either */
+#endif
+        return;
+    }
+    ble_midi_set(*rx, *tx);
+    ble_boot_started = ble_up;
 }
 
 /* (1.2) the step a breadcrumb word names when the radio's start-up had not finished: the FM-1 reset (a watchdog

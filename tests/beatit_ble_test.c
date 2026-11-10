@@ -754,7 +754,7 @@ static void t_status(void)
     check(dg_n == BLE_DIAG_LEN && dg_msg[0] == 0xF0u && dg_msg[1] == 0x7Du && dg_msg[2] == 0x42u && dg_msg[3] == 0x49u &&
               dg_msg[4] == 0x02u && dg_msg[BLE_DIAG_LEN - 1u] == 0xF7u && nf >= 2u,
           "... the reply over the air (the stack's encoder, 20-octet notifications, decoded again): F0 7D 42 49 02 .. F7, 38 bytes");
-    check(d[0] == 1u && d[1] == 1u && d[2] == 4u, "... layout 1, Beat It 1.4");
+    check(d[0] == 1u && d[1] == 1u && d[2] == 5u, "... layout 1, Beat It 1.5");
     check(d[3] == BLE_RF_FROM_COPY && d[4] == (1u | 2u | 4u) && d[5] == 0u && d[6] == 3u && d[7] == 2u,
           "... RADIO CAL BACKUP, RECEIVE + SEND + listening, no hung step, CLOCK IN BT, CLOCK OUT BT");
     check(dg_28(d + 8) == 2u && dg_28(d + 12) == 1u && dg_28(d + 16) == 0u && dg_28(d + 20) == 7u && rx0 == 2u,
@@ -900,6 +900,44 @@ int main(int argc, char **argv)
     t_send_off_ring();
     t_link_line();
     t_menu_sig();
+    {   /* (Beat It 1.5) the power-on start and the 400 ms hold */
+        uint8_t rx = 0, tx = 0;
+        ble_midi_set(0, 0);
+        ble_up = 0; ble_on = 0; ble_hung_step = 0; cpu1_host_holds = 0;
+        ble_midi_boot(&rx, &tx);
+        check(!ble_up && !cpu1_host_holds, "(1.5) BT saved OFF: the radio does not start at power-on");
+        rx = 1; tx = 1;
+        ble_midi_boot(&rx, &tx);
+        check(ble_up && ble_on && ble_rx_on && ble_tx_on && ble_boot_started, "(1.5) BT saved ON: the radio starts at power-on, RECEIVE and SEND on");
+        check(cpu1_host_holds >= 1u && cpu1_host_hold_ms == 400u && !ble_cpu1_stopped, "(1.5) core 1 kept running, no job for it for 400 ms after the start");
+        ble_midi_set(0, 0);
+        ble_up = 0; ble_on = 0; ble_hung_step = 3; rx = 1; tx = 0;
+        ble_midi_boot(&rx, &tx);
+        check(!ble_up && !rx && !tx && ble_boot_skipped, "(1.5) the last run reset during a radio start: no start at power-on, BT turned OFF (no boot loop)");
+        ble_hung_step = 0;
+    }
+    {   /* (Beat It 1.5) BT STATUS says 1.5, the power-on start (flag 64) and a stopped second core (flag 16) */
+        uint8_t rx = 1, tx = 1, *d = dg_msg + 5;
+        uint32_t pkt, t;
+        ble_midi_set(0, 0);
+        ble_up = 0; ble_on = 0; ble_hung_step = 0; ble_boot_started = 0; ble_cpu1_stopped = 0;
+        ble_midi_boot(&rx, &tx);
+        ble_out_on = 1;
+        while (ble_app_midi_peek(&pkt, &t))
+            ble_app_midi_pop();
+        WCMD(0x80, 0x80, 0xF0, 0x7D, 0x42, 0x49, 0x01, 0x80, 0xF7);
+        tick();
+        check(dg_air(20) && dg_n == BLE_DIAG_LEN && d[2] == 5u && (d[4] & 64u) && !(d[4] & 16u),
+              "(1.5) BT STATUS after a power-on start: Beat It 1.5, flag 64 (started at power-on), second core running");
+        ble_cpu1_stopped = 1;
+        WCMD(0x80, 0x80, 0xF0, 0x7D, 0x42, 0x49, 0x01, 0x80, 0xF7);
+        tick();
+        check(dg_air(20) && dg_n == BLE_DIAG_LEN && (d[4] & 16u), "(1.5) ... a stopped second core still shows as flag 16");
+        ble_cpu1_stopped = 0;
+        ble_boot_started = 0;
+        ble_out_on = 0;
+        ble_midi_set(0, 0);
+    }
     printf("beatit_ble: %d failed\n", fails);
     return fails;
 }

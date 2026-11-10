@@ -37,6 +37,25 @@ int main(void)
     b[2u * ML_N + 5u] &= 31u; b[2u * ML_N + 6u] &= 63u;   /* settings written by SLOOP: the bits clear */
     midi_part_read(b, MIDI_PART);
     ck(scope_view == SV_FULL && scope_col == 7u, "settings from SLOOP (bits clear): FULL SCREEN and SOUND");
+    {   /* (Beat It 1.5) BT MIDI RECEIVE / SEND saved in REMOTE's byte, bits 5-6 */
+        uint32_t r, t;
+        int ok = 1;
+        for (r = 0; r < 2u; r++)
+            for (t = 0; t < 2u; t++) {
+                bt_rx = (uint8_t)r; bt_tx = (uint8_t)t; midi_set[8] = 11u; midi_set[9] = 2u;
+                midi_part_fill(b);
+                bt_rx = (uint8_t)!r; bt_tx = (uint8_t)!t; midi_set[8] = 0;
+                midi_part_read(b, MIDI_PART);
+                if (bt_rx != r || bt_tx != t || midi_set[8] != 11u)
+                    ok = 0;
+            }
+        ck(ok, "(1.5) BT MIDI RECEIVE x SEND round-trip, the REMOTE channel untouched");
+        bt_rx = 1; bt_tx = 1;
+        midi_part_fill(b);
+        b[2u * ML_N + 7u] &= (uint8_t)~0x60u;            /* settings written by Beat It 1.4 or SLOOP */
+        midi_part_read(b, MIDI_PART);
+        ck(!bt_rx && !bt_tx, "(1.5) settings from 1.4 / SLOOP: Bluetooth OFF at power-on");
+    }
     printf("beatit_settings_test: %s\n", bad ? "FAILED" : "all checks ok");
     return bad != 0;
 }

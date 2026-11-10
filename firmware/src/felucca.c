@@ -37,6 +37,14 @@ _Static_assert(SYNC_N == 4u && sizeof N_CLKOUT / sizeof N_CLKOUT[0] == 4u, "a Bl
 #ifndef FELUCCA_OTA_DRYRUN
 #define FELUCCA_OTA_DRYRUN 0     /* 1 = stage, ask "success", then undo: no record, no reset */
 #endif
+#ifndef BEATIT_STOCK_SUPPLY
+#define BEATIT_STOCK_SUPPLY 0   /* (Beat It 1.5) 1: the opt-in STOCK SUPPLY test build (hal/fm1_supply_stock.h) */
+#endif
+#if BEATIT_STOCK_SUPPLY
+#include "fm1_supply_stock.h"
+static uint8_t beatit_supply;            /* bit 7: the stock supply start-up ran; bits 0-3: FM1_SUP_* (0 = read back right) */
+static uint32_t beatit_supply_regs;      /* CON0 | CON5 << 8 | CON6 << 16 | CON9 << 24 after it (console) */
+#endif
 #ifndef FELUCCA_CPU1
 #define FELUCCA_CPU1 1          /* the second core (cpu1.c); 0: one core, as SLOOP 2.5 */
 #endif
@@ -67,6 +75,7 @@ static void ble_midi_set(uint8_t rx, uint8_t tx);
 static int ble_radio_ok(void);
 static const char *ble_link_text(void);
 static uint8_t ble_cpu1_stopped;           /* (midi_ble.c) the second core was stopped for the radio */
+static uint8_t ble_up;                     /* (midi_ble.c, a tentative definition: 1.5 bt_apply reads it) */
 static const char *ble_cal_text(void);       /* (midi_ble.c) RADIO CAL: STOCK / BACKUP / MISSING */
 static const char *ble_cal_sub(void);
 static const char *ble_link_sub(int *warn);   /* (midi_ble.c, 1.2) BT CONNECTION's line: a hung start, the counts */
@@ -105,15 +114,19 @@ static int ble_rf_copy_ok(const uint8_t *copy);
 #error "FELUCCA_OTA needs FELUCCA_FLASH"
 #endif
 #if FELUCCA_FLASH
+#if FELUCCA_CPU1
+#define FM1_FLASH_PARK() fm1_cpu1_park()           /* (Beat It 1.5) core 1 parked in RAM around every flash command */
+#define FM1_FLASH_UNPARK(p) fm1_cpu1_unpark(p)
+#endif
 #include "fm1_flash.h"
 static uint8_t flash_ok;                 /* JEDEC id matched at boot (persist_boot) */
 static int st_read(uint32_t off, void *dst, uint32_t n)   /* 256-byte IRQ-off windows: audio keeps up */
 {
     uint8_t *d = dst;
     while (n) {
-        uint32_t k = n > 256u ? 256u : n, f = irq_save();
+        uint32_t k = n > 256u ? 256u : n, f = fl_lock();
         int rc = FL_FAR(fl_read_ram)(off, d, k);
-        irq_restore(f);
+        fl_unlock(f);
         if (rc)
             return rc;
         off += k;
@@ -132,11 +145,11 @@ static void audio_silence(void)                 /* IRQs off: the DMA would loop 
  * audio interrupt could render a fresh half that the DMA then loops for the whole erase: a buzz) */
 static int fl_erase4k_quiet(uint32_t off, uint32_t *took)
 {
-    uint32_t f = irq_save();
+    uint32_t f = fl_lock();
     int rc;
     audio_silence();
     rc = FL_FAR(fl_erase4k_ram)(off, took);
-    irq_restore(f);
+    fl_unlock(f);
     return rc;
 }
 static int st_erase(uint32_t off)

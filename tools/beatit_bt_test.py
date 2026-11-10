@@ -183,7 +183,7 @@ class Decoder:
 
 
 def parse_status(m):
-    """Beat It 1.4's BT STATUS reply (midi_ble.c ble_diag_reply) -> dict, or None"""
+    """Beat It 1.4 / 1.5's BT STATUS reply (midi_ble.c ble_diag_reply) -> dict, or None"""
     m = bytes(m)
     if len(m) != STATUS_LEN or not m.startswith(STATUS_HDR) or m[-1] != 0xF7:
         return None
@@ -200,7 +200,7 @@ def parse_status(m):
         "layout": d[0], "version": "%d.%d" % (d[1], d[2]),
         "radio_cal": RADIO_CAL.get(d[3], "?%d" % d[3]),
         "receive": bool(f & 1), "send": bool(f & 2), "listening": bool(f & 4), "encrypted": bool(f & 8),
-        "core2_stopped": bool(f & 16), "draining": bool(f & 32),
+        "core2_stopped": bool(f & 16), "draining": bool(f & 32), "boot_start": bool(f & 64),
         "hung_step": d[5], "clock_in": CLOCK_IN.get(d[6], str(d[6])), "clock_out": CLOCK_OUT.get(d[7], str(d[7])),
         "in": n28(8), "out": n28(12), "lost_in": n28(16), "lost_out": n28(20),
         "interval_ms": n14(24) * 1.25, "timeout_ms": n14(26) * 10, "mtu": n14(28), "data_len": n14(30),
@@ -215,7 +215,7 @@ def status_bytes(s):
     d[1], d[2] = [int(x) for x in s["version"].split(".")]
     d[3] = inv(RADIO_CAL, s["radio_cal"])
     d[4] = (s["receive"] and 1) | (s["send"] and 2) | (s["listening"] and 4) | (s["encrypted"] and 8) | \
-        (s["core2_stopped"] and 16) | (s["draining"] and 32)
+        (s["core2_stopped"] and 16) | (s["draining"] and 32) | (s.get("boot_start") and 64)
     d[5] = s["hung_step"]
     d[6] = inv(CLOCK_IN, s["clock_in"])
     d[7] = inv(CLOCK_OUT, s["clock_out"])
@@ -373,16 +373,16 @@ class BleLink(Link):
 
 
 class SimLink(Link):
-    """a FM-1 running Beat It 1.4, as midi_ble.c behaves (for --selftest): counts IN per channel / realtime message
+    """a FM-1 running Beat It 1.4 or 1.5, as midi_ble.c behaves (for --selftest): counts IN per channel / realtime message
     it would queue, answers BT STATUS, plays notes and the clock back with timestamps and a radio's jitter"""
 
-    def __init__(self, rep, version="1.4", lose_every=0):
+    def __init__(self, rep, version="1.5", lose_every=0):
         super().__init__(rep, 20)
         self.version = version
         self.fdec = Decoder()
         self.st = {"layout": 1, "version": version, "radio_cal": "STOCK", "receive": True, "send": True,
-                   "listening": True, "encrypted": False, "core2_stopped": True, "draining": False, "hung_step": 0,
-                   "clock_in": "INT", "clock_out": "OFF", "in": 0, "out": 0, "lost_in": 0, "lost_out": 0,
+                   "listening": True, "encrypted": False, "core2_stopped": version < "1.5", "draining": False,
+                   "boot_start": version >= "1.5", "hung_step": 0, "clock_in": "INT", "clock_out": "OFF", "in": 0, "out": 0, "lost_in": 0, "lost_out": 0,
                    "interval_ms": 15.0, "timeout_ms": 2000, "mtu": 23, "data_len": 27}
         self.lose_every = lose_every
         self.k = 0
@@ -640,6 +640,8 @@ def show_status(r, s, label=""):
     r.line("   %slink: interval %.2f ms, timeout %d ms, MTU %d, data length %d, %s, second core %s" % (
         label, s["interval_ms"], s["timeout_ms"], s["mtu"], s["data_len"],
         "encrypted" if s["encrypted"] else "not encrypted", "stopped" if s["core2_stopped"] else "running"))
+    if s.get("boot_start"):
+        r.line("   %sthe radio started at power-on (Beat It 1.5: BT was saved ON)" % label)
     if s["hung_step"]:
         r.line("   %slast run reset during start-up step %d %s" % (label, s["hung_step"], STEP_NAMES.get(s["hung_step"], "")))
 
@@ -665,6 +667,10 @@ async def step_status(c):
         issues.append("RADIO CAL MISSING (yet the radio runs?)")
     if not s["listening"]:
         issues.append("the FM-1 says nobody has its notifications on")
+    if s["version"] >= "1.5" and s["core2_stopped"]:
+        r.line("   Beat It 1.5 keeps both cores running with Bluetooth on. A stopped second core means the FM-1 fell")
+        r.line("   back to one core after a fault since power-on: write down what ABOUT shows and send this log.")
+        issues.append("second core stopped (1.5 should keep it running)")
     if s["interval_ms"] and s["interval_ms"] > 50:
         r.line("   (a long connection interval: notes may come late in bunches; a laptop usually asks for 15-30 ms)")
     if issues:
@@ -1061,11 +1067,14 @@ def selftest_codec():
     d.feed(bytes([0x00, 0x90]))
     check(d.errors == errs + 1, "a packet without a header is refused")
     st = {"layout": 1, "version": "1.4", "radio_cal": "BACKUP", "receive": True, "send": False, "listening": True,
-          "encrypted": False, "core2_stopped": True, "draining": False, "hung_step": 4, "clock_in": "BT",
+          "encrypted": False, "core2_stopped": True, "draining": False, "boot_start": False, "hung_step": 4, "clock_in": "BT",
           "clock_out": "USB+BT", "in": 300000, "out": 2, "lost_in": 0, "lost_out": 9, "interval_ms": 7.5,
           "timeout_ms": 5000, "mtu": 185, "data_len": 251}
     sb = status_bytes(st)
     check(len(sb) == STATUS_LEN and parse_status(sb) == st, "BT STATUS: 38 bytes, every field back")
+    st15 = dict(st, version="1.5", core2_stopped=False, boot_start=True)
+    check(parse_status(status_bytes(st15)) == st15 and status_bytes(st15)[5 + 4] & 64,
+          "BT STATUS 1.5: started at power-on (flag 64), second core running")
     for cap in (20, 23, 64, 182):
         msgs = [(bytes([0x90, 60, 100]), 10), (sb, 11), (b"\xF8", 12), (bytes([0xB0, 64, 0]), 140), (STATUS_Q, 200),
                 (bytes([0xC3, 5]), 8191)]
@@ -1081,6 +1090,7 @@ def selftest_codec():
 def selftest(args):
     ok = selftest_codec()
     scenarios = [
+        ("Beat It 1.5, everything works", "1.5", 0, ["", "y", "", "", "", "120", "", "y", ""], 0),
         ("Beat It 1.4, everything works", "1.4", 0, ["", "y", "", "", "", "120", "", "y", ""], 0),
         ("Beat It 1.3 (no BT STATUS): steps still run on your answers", "1.3", 0, ["", "y", "", "", "", "120", "", "y"], 0),
         ("Beat It 1.4, the FM-1 drops every 7th message: receive, clockin and stress must notice", "1.4", 7,
@@ -1104,7 +1114,7 @@ def selftest(args):
             res = dict((s, v) for s, v, _ in rep.results)
             if want == 0:
                 good = rc == 0 and all(v in ("PASS", "INFO", "SKIP") for v in res.values())
-                if ver == "1.4":
+                if ver >= "1.4":
                     good &= all(res.get(s) == "PASS" for s in ("status", "receive", "send", "stuck", "clockout", "clockin", "stress"))
                 else:
                     good &= res.get("status") == "INFO" and res.get("stress") == "SKIP"
@@ -1162,7 +1172,7 @@ def main():
     args = ap.parse_args()
     args.selftest_run = False
     args.answers = None
-    args.sim_version, args.sim_lose = "1.4", 0
+    args.sim_version, args.sim_lose = "1.5", 0
     if not 1 <= args.channel <= 16:
         ap.error("--channel is 1 to 16")
     if args.selftest:

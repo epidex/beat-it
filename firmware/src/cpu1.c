@@ -4,7 +4,8 @@
  * ABOUT ("2 CORES" / "1 CORE") and in the console (cpu1, cpu1_trace, cpu1_timeouts, cpu1_stack_free). The
  * render hands it a share of its units each block (fx.c mix_units, through cpu1.h's cpu1_run / cpu1_wait).
  * The HAL is X0X's (hal/fm1_cpu1.h): one job at a time, core 0 hands it over and waits; the waiting loop
- * lives in RAM (.c1_text), so an idle core 1 never fetches from the flash and flash writes need no parking.
+ * lives in RAM (.c1_text). (Beat It 1.5: Optimist found a unit could still crash with core 1 merely spinning
+ * there during a flash write, so every flash command now parks it first: fm1_cpu1.h fm1_cpu1_park.)
  * FELUCCA_CPU1=0 builds without any of it. */
 enum { CPU1_OFF, CPU1_NOSTART, CPU1_FAILED, CPU1_OK };   /* not built / did not report in / self-test wrong / running */
 static uint8_t cpu1_state = CPU1_OFF;
@@ -17,7 +18,27 @@ static volatile uint32_t cpu1_test_out;
 /* cpu1.h's API over the HAL: the render hands its jobs through these */
 static int cpu1_on(void) { return cpu1_state == CPU1_OK && fm1_c1_on; }
 static uint32_t cpu1_ticks(void) { return fm1_ticks(); }
-static int cpu1_run(cpu1_job_t fn, uint32_t arg) { return cpu1_state == CPU1_OK ? fm1_cpu1_run(fn, arg) : 0; }
+/* (Beat It 1.5, after Optimist's DUAL_STOCK_HOLD_MS) no work handed to core 1 until 400 ms after the radio
+ * started (midi_ble.c): core 0 renders everything meanwhile, as M-VAVE's firmware waits after its BLE start */
+static uint8_t cpu1_holding;
+static uint32_t cpu1_hold_t0, cpu1_hold_ticks;
+static void cpu1_hold_jobs_ms(uint32_t ms)
+{
+    cpu1_hold_t0 = fm1_ticks();
+    cpu1_hold_ticks = ms * 1000u * FM1_TICKS_PER_US;
+    cpu1_holding = 1;
+}
+static int cpu1_run(cpu1_job_t fn, uint32_t arg)
+{
+    if (cpu1_state != CPU1_OK)
+        return 0;
+    if (cpu1_holding) {
+        if (fm1_ticks() - cpu1_hold_t0 < cpu1_hold_ticks)
+            return 0;                                    /* (the caller renders this block on core 0) */
+        cpu1_holding = 0;
+    }
+    return fm1_cpu1_run(fn, arg);
+}
 static int cpu1_wait(void)
 {
     if (fm1_cpu1_wait() == 0)
@@ -49,6 +70,12 @@ static void cpu1_boot(void)
     if (cpu1_off)                                        /* 2.7: 2ND CORE OFF (ON is the default): core 1 is never started,
                                                           * the boot is 2.6's; ON takes effect at the next power-on */
         return;
+#if BEATIT_STOCK_SUPPLY
+    if (beatit_supply & 0x0Fu) {                         /* (1.5 STOCK SUPPLY) the rails did not read back: never started */
+        cpu1_state = CPU1_NOSTART;
+        return;
+    }
+#endif
     fm1_guard_pc_open();
     if (fm1_cpu1_start() != 0) {
         fm1_guard_enable(FM1_GUARD_PC);
@@ -94,6 +121,7 @@ static void cpu1_boot(void) {}
 static const char *cpu1_label(void) { return "1 CORE"; }
 static int cpu1_on(void) { return 0; }
 static int cpu1_run(cpu1_job_t fn, uint32_t arg) { (void)fn; (void)arg; return 0; }
+static void cpu1_hold_jobs_ms(uint32_t ms) { (void)ms; }
 static int cpu1_wait(void) { return 0; }
 static uint32_t cpu1_ticks(void) { return 0; }
 #endif
