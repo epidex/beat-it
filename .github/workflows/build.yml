@@ -34,7 +34,7 @@ jobs:
           python-version: '3.12'
 
       - name: Python packages
-        run: python3 -m pip install Pillow
+        run: python3 -m pip install Pillow 'bleak>=0.22,<4'
 
       - name: JieLi Linux toolchain (pkgman.jieliapp.com)
         run: |
@@ -58,6 +58,9 @@ jobs:
 
       - name: Build (firmware + Windows installer page)
         run: sh tools/ci_build_beatit.sh
+
+      - name: Bluetooth tests (simulator and host; must pass)
+        run: sh tools/ci_bt_tests.sh
 
       - name: Tests (known failures for removed sounds; not blocking)
         continue-on-error: true

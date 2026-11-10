@@ -3,8 +3,9 @@
 Beat It is a custom firmware for the M-VAVE FM-1, built on SLOOP (isod89/sloop-fm1, GPL-3.0-only). It keeps the drums
 and the two FM engines, adds a purple-and-black theme, a BEAT IT start-up screen, a full-screen scope with SCOPE VIEW
 presets, a dedicated MIDI menu, and (from 1.1) Bluetooth MIDI using Optimist's open-source driver, with a backup of the
-unit's radio calibration. 1.2 added following a Bluetooth clock; 1.3 adds sending the clock over Bluetooth (CLOCK OUT BT / USB+BT)
-and ends held notes when BT MIDI SEND is turned off.
+unit's radio calibration. 1.2 added following a Bluetooth clock; 1.3 added sending the clock over Bluetooth (CLOCK OUT BT / USB+BT)
+and ends held notes when BT MIDI SEND is turned off; 1.4 adds BT STATUS (a SysEx question any connected app can ask)
+and a Linux Bluetooth test script, `tools/beatit-bt-test.sh` ([docs/BEAT-IT-LINUX-BT-TEST.md](docs/BEAT-IT-LINUX-BT-TEST.md)).
 
 **Status:** builds and passes its tests in a simulator. It has not run on a real FM-1, and Bluetooth has never been
 tried over a real radio.
@@ -18,12 +19,14 @@ Every push runs `.github/workflows/build.yml` on GitHub's Linux machines. When a
 
 - `Beat-It-X.Y-installer.html`: open it in Chrome or Edge on Windows and press INSTALL (see the install guide)
 - `Beat-It-X.Y.fwsc`: the firmware on its own, for SLOOP's Python installer or the Firmware Hub
+- `Beat-It-X.Y-linux-bt-test.tar.gz`: the Linux Bluetooth test script and its guide
 - `SHA256SUMS`
 
 Pushing a tag such as `v1.2` also puts those files on a release (the **Releases** page).
 
 The build step is `tools/ci_build_beatit.sh` (`build.sh`, then the installer page). The tests run on every build but
-do not stop it, because some SLOOP tests cover sounds Beat It removed and are expected to fail.
+do not stop it, because some SLOOP tests cover sounds Beat It removed and are expected to fail. The Bluetooth and
+calibration tests (`tools/ci_bt_tests.sh`) run as their own step first, and that step must pass.
 
 ## Before installing
 

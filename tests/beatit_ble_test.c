@@ -691,13 +691,205 @@ static void t_send_close(void)
     ble_midi_set(0, 0);
 }
 
-int main(void)
+/* ---- (1.4) BT STATUS: the SysEx query F0 7D 42 49 01 F7 over Bluetooth, the reply notified back */
+static uint8_t dg_msg[64];
+static uint32_t dg_n, dg_pkts;
+static void dg_sink(void *ctx, uint32_t pkt, uint16_t ts)
 {
+    uint32_t cin = pkt & 15u, n = cin == 4u || cin == 7u ? 3u : cin == 6u ? 2u : cin == 5u ? 1u : 0u, i;
+    (void)ctx, (void)ts;
+    dg_pkts++;
+    for (i = 0; i < n && dg_n < sizeof dg_msg; i++)
+        dg_msg[dg_n++] = (uint8_t)(pkt >> (8u + 8u * i));
+}
+/* what the central gets: the out ring through the stack's own BLE-MIDI encoder (notifications of mtu - 3 octets),
+ * then decoded again as a central would; the SysEx's bytes in dg_msg. Returns the notifications it took */
+static uint32_t dg_air(uint16_t cap)
+{
+    struct ble_midi_enc e;
+    struct ble_midi_dec d;
+    uint8_t buf[256];
+    uint32_t pkt, t, nf = 0;
+    dg_n = dg_pkts = 0;
+    ble_midi_dec_reset(&d);
+    ble_midi_enc_reset(&e);
+    while (ble_app_midi_peek(&pkt, &t)) {
+        ble_midi_enc_begin(&e, buf, cap);
+        while (ble_app_midi_peek(&pkt, &t) && ble_midi_enc_add(&e, pkt, t))
+            ble_app_midi_pop();
+        if (!ble_midi_enc_len(&e))
+            break;
+        ble_midi_dec(&d, buf, ble_midi_enc_len(&e), dg_sink, 0);
+        nf++;
+    }
+    return nf;
+}
+static uint32_t dg_28(const uint8_t *d) { return d[0] | d[1] << 7 | d[2] << 14 | (uint32_t)d[3] << 21; }
+static uint32_t dg_14(const uint8_t *d) { return d[0] | d[1] << 7; }
+
+static void t_status(void)
+{
+    uint32_t nf, tx0, rx0, pkt, t;
+    const uint8_t *d = dg_msg + 5;
+    uint8_t src0 = ble_rf_src;
+    reset();
+    ble_midi_set(1, 1);
+    ble_out_on = 1;
+    ble_rf_src = BLE_RF_FROM_COPY;
+    ble_rx_count = ble_tx_count = ble_rx_lost = 0;
+    ble_tx_lost = 7;
+    song.g[G_SYNC] = 3;
+    song.g[G_CLKOUT] = 2;
+    WCMD(0x80, 0x80, 0x90, 0x3C, 0x64, 0x80, 0x80, 0x3C, 0x00);   /* a note on and off: IN 2 */
+    midi_out_event(0x09u | 0x90u << 8 | 60u << 16 | 100u << 24);   /* the FM-1 plays one: OUT 1 */
+    while (ble_app_midi_peek(&pkt, &t))
+        ble_app_midi_pop();
+    tx0 = ble_tx_count;
+    WCMD(0x80, 0x80, 0xF0, 0x7D, 0x42, 0x49, 0x01, 0x80, 0xF7);  /* the query (a timestamp before F7, as BLE-MIDI has it) */
+    check(ble_diag_req && bmi_w - bmi_r == 2u, "1.4: BT STATUS query: taken (the note on / off still waiting), not queued as MIDI");
+    tick();
+    rx0 = ble_rx_count;
+    check(ble_diag_sent == 1u && !ble_diag_req, "... answered at the next TIMER5 tick");
+    nf = dg_air(20);
+    check(dg_n == BLE_DIAG_LEN && dg_msg[0] == 0xF0u && dg_msg[1] == 0x7Du && dg_msg[2] == 0x42u && dg_msg[3] == 0x49u &&
+              dg_msg[4] == 0x02u && dg_msg[BLE_DIAG_LEN - 1u] == 0xF7u && nf >= 2u,
+          "... the reply over the air (the stack's encoder, 20-octet notifications, decoded again): F0 7D 42 49 02 .. F7, 38 bytes");
+    check(d[0] == 1u && d[1] == 1u && d[2] == 4u, "... layout 1, Beat It 1.4");
+    check(d[3] == BLE_RF_FROM_COPY && d[4] == (1u | 2u | 4u) && d[5] == 0u && d[6] == 3u && d[7] == 2u,
+          "... RADIO CAL BACKUP, RECEIVE + SEND + listening, no hung step, CLOCK IN BT, CLOCK OUT BT");
+    check(dg_28(d + 8) == 2u && dg_28(d + 12) == 1u && dg_28(d + 16) == 0u && dg_28(d + 20) == 7u && rx0 == 2u,
+          "... IN 2 (the note on and off, counted before the reply), OUT 1, LOST 0 in, 7 out");
+    check(dg_14(d + 28) == ble_att_mtu() && dg_14(d + 24) == ble_ll_interval() && dg_14(d + 30) == ble_ll_tx_octets(),
+          "... the link's MTU, interval and data length as the stack has them");
+    check(ble_tx_count == tx0 && ble_rx_count == rx0 && !gated(&trk[0], 0x49), "... the query and the reply not counted as IN / OUT, nothing played");
+    blocks(4);
+
+    /* the query cut over two writes (a SysEx continued in the next packet) */
+    WCMD(0x80, 0x80, 0xF0, 0x7D, 0x42);
+    WCMD(0x80, 0x49, 0x01, 0x80, 0xF7);
+    tick();
+    check(ble_diag_sent == 2u && dg_air(20) && dg_n == BLE_DIAG_LEN, "a query split over two writes: answered");
+
+    /* other SysEx: no reply */
+    WCMD(0x80, 0x80, 0xF0, 0x7D, 0x42, 0x49, 0x01, 0x00, 0x80, 0xF7);   /* one byte too many */
+    WCMD(0x80, 0x80, 0xF0, 0x7E, 0x7F, 0x06, 0x01, 0x80, 0xF7);         /* a Universal Device Inquiry */
+    WCMD(0x80, 0x80, 0xF0, 0x7D, 0x42, 0x49, 0x80, 0xF7);               /* cut short */
+    WCMD(0x80, 0x80, 0xF0, 0x7D, 0x46, 0x4C, 0x01, 0x80, 0xF7);         /* the editor's header */
+    tick();
+    check(ble_diag_sent == 2u && !ble_app_midi_peek(&pkt, &t) && bmi_w == bmi_r, "other SysEx (longer, cut short, another ID): no reply, nothing played");
+
+    /* SEND OFF, RECEIVE on: still answered (the ring opened for it alone), then closed */
+    ble_midi_set(1, 0);
+    while (ble_app_midi_peek(&pkt, &t))
+        ble_app_midi_pop();
+    WCMD(0x80, 0x80, 0xF0, 0x7D, 0x42, 0x49, 0x01, 0x80, 0xF7);
+    tick();
+    nf = dg_air(20);
+    check(ble_diag_sent == 3u && dg_n == BLE_DIAG_LEN && d[4] == (1u | 4u) && !ble_tx_drain,
+          "SEND OFF: still answered (flags RECEIVE + listening), the ring closed again after it");
+    midi_out_event(0x09u | 0x90u << 8 | 62u << 16 | 100u << 24);
+    check(!ble_app_midi_peek(&pkt, &t), "... and SEND OFF still sends no MIDI");
+
+    /* SEND ON, RECEIVE OFF: answered too (the query is not MIDI in) */
+    ble_midi_set(0, 1);
+    WCMD(0x80, 0x80, 0xF0, 0x7D, 0x42, 0x49, 0x01, 0x80, 0xF7);
+    tick();
+    check(ble_diag_sent == 4u && dg_air(20) && dg_n == BLE_DIAG_LEN && d[4] == (2u | 4u), "RECEIVE OFF, SEND ON: answered (flags SEND + listening)");
+
+    /* nobody listening, or a full ring: dropped, never a partial reply */
+    ble_out_on = 0;
+    WCMD(0x80, 0x80, 0xF0, 0x7D, 0x42, 0x49, 0x01, 0x80, 0xF7);
+    tick();
+    check(ble_diag_sent == 4u && bmo_w == bmo_r && !ble_diag_req, "no central listening (CCCD off): no reply, the query forgotten");
+    ble_out_on = 1;
+    while (bmo_w - bmo_r < BMQ - BLE_DIAG_SLOTS + 1u)
+        midi_out_event(0x08u | 0x80u << 8 | 60u << 16);           /* note-offs fill past the reserve */
+    tx0 = bmo_w - bmo_r;
+    WCMD(0x80, 0x80, 0xF0, 0x7D, 0x42, 0x49, 0x01, 0x80, 0xF7);
+    tick();
+    check(ble_diag_sent == 4u && bmo_w - bmo_r == tx0, "a congested link (fewer than 13 slots free): no reply, nothing half-queued");
+    while (ble_app_midi_peek(&pkt, &t))
+        ble_app_midi_pop();
+    WCMD(0x80, 0x80, 0xF0, 0x7D, 0x42, 0x49, 0x01, 0x80, 0xF7);
+    tick();
+    check(ble_diag_sent == 5u && dg_air(20) && dg_n == BLE_DIAG_LEN, "... asked again once it drained: answered");
+
+    /* a reply in the middle of the FM-1's own notes: whole, not interleaved, the notes around it intact */
+    midi_out_event(0x09u | 0x90u << 8 | 64u << 16 | 100u << 24);
+    WCMD(0x80, 0x80, 0xF0, 0x7D, 0x42, 0x49, 0x01, 0x80, 0xF7);
+    tick();
+    midi_out_event(0x08u | 0x80u << 8 | 64u << 16);
+    nf = dg_air(20);
+    check(dg_n == BLE_DIAG_LEN && dg_pkts == BLE_DIAG_SLOTS + 2u, "a reply between two notes: 13 SysEx packets whole, both notes still there");
+
+    /* the radio off: nothing */
+    ble_midi_set(0, 0);
+    WCMD(0x80, 0x80, 0xF0, 0x7D, 0x42, 0x49, 0x01, 0x80, 0xF7);
+    tick();
+    check(ble_diag_sent == 6u && !ble_diag_req && bmo_w == bmo_r, "Bluetooth OFF: no reply");
+    song.g[G_SYNC] = 0;
+    song.g[G_CLKOUT] = 0;
+    ble_rf_src = src0;
+}
+
+/* (1.4) interop with tools/beatit_bt_test.py: beatit_ble_test --interop IN OUT. IN: BLE-MIDI packets the Linux
+ * tool encoded (hex, one a line), written to the MIDI characteristic as a central would; OUT: what the FM-1
+ * notifies back (the stack's encoder, 20-octet packets), hex, one a line. tests/bt_tool_interop.py checks both ends */
+static int interop(const char *in, const char *out)
+{
+    FILE *fi = fopen(in, "r"), *fo = fopen(out, "w");
+    char line[1024];
+    struct ble_midi_enc e;
+    uint8_t buf[256];
+    uint32_t pkt, t, i;
+    if (!fi || !fo)
+        return 2;
+    reset();
+    ble_midi_set(1, 1);
+    ble_out_on = 1;
+    ble_rf_src = BLE_RF_FROM_COPY;
+    song.g[G_SYNC] = 3;
+    while (fgets(line, sizeof line, fi)) {
+        uint8_t p[256];
+        uint32_t n = 0;
+        unsigned v;
+        char *c = line;
+        int k;
+        while (n < sizeof p && sscanf(c, "%2x%n", &v, &k) == 1) {
+            p[n++] = (uint8_t)v;
+            c += k;
+        }
+        if (n)
+            wcmd(0x000E, p, n);
+        tick();
+    }
+    ble_midi_enc_reset(&e);
+    while (ble_app_midi_peek(&pkt, &t)) {
+        ble_midi_enc_begin(&e, buf, 20);
+        while (ble_app_midi_peek(&pkt, &t) && ble_midi_enc_add(&e, pkt, t))
+            ble_app_midi_pop();
+        if (!ble_midi_enc_len(&e))
+            break;
+        for (i = 0; i < ble_midi_enc_len(&e); i++)
+            fprintf(fo, "%02X", buf[i]);
+        fprintf(fo, "\n");
+    }
+    fprintf(fo, "# IN %u LOST %u replies %u\n", (unsigned)ble_rx_count, (unsigned)ble_rx_lost, (unsigned)ble_diag_sent);
+    fclose(fi);
+    fclose(fo);
+    return 0;
+}
+
+int main(int argc, char **argv)
+{
+    if (argc == 4 && !strcmp(argv[1], "--interop"))
+        return interop(argv[2], argv[3]);
     t_off_at_boot();
     t_receive();
     t_channels();
     t_vanished();
     t_send();
+    t_status();
     t_name();
     t_no_cal();
     t_cal_backup();

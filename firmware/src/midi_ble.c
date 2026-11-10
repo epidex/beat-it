@@ -133,10 +133,118 @@ static uint32_t ble_in_time(uint16_t ts, uint16_t last_ts)
     return t;
 }
 
+/* (1.4) BT STATUS over Bluetooth: a central that writes the SysEx F0 7D 42 49 01 F7 ("BI", status) gets one reply
+ * notified back, F0 7D 42 49 02 <32 data bytes> F7 (layout: ble_diag_reply), so a test tool (tools/beatit_bt_test.py)
+ * reads what BT CONNECTION shows (the counts, RADIO CAL, the hung step) and what the screen cannot (the connection
+ * interval, the MTU, encryption) without a photo of the screen. Answered with BT MIDI RECEIVE or SEND on (the radio on),
+ * never played, never counted as MIDI in or out. 0x7D: MIDI's non-commercial ID (the editor's SysEx is 7D 46 4C) */
+#define BLE_DIAG_DATA 32u
+#define BLE_DIAG_LEN (5u + BLE_DIAG_DATA + 1u)
+#define BLE_DIAG_SLOTS ((BLE_DIAG_LEN + 2u) / 3u)
+static const uint8_t BLE_DIAG_Q[6] = {0xF0u, 0x7Du, 0x42u, 0x49u, 0x01u, 0xF7u};
+static uint8_t ble_diag_n = 0xFFu;             /* the query's octets matched so far in this SysEx (0xFF: not it) */
+static volatile uint8_t ble_diag_req;          /* a query arrived (the BLE interrupts): answered by ble_midi_poll */
+static volatile uint32_t ble_diag_sent;        /* (the host tests) replies queued */
+
+static void ble_diag_feed(uint32_t pkt)        /* the BLE interrupts: a SysEx packet (CIN 4..7) from the decoder */
+{
+    uint32_t cin = pkt & 15u, n = cin == 4u || cin == 7u ? 3u : cin == 6u ? 2u : 1u, i;
+    for (i = 0; i < n; i++) {
+        uint8_t b = (uint8_t)(pkt >> (8u + 8u * i));
+        if (b == 0xF0u)
+            ble_diag_n = 0;
+        ble_diag_n = (uint8_t)(ble_diag_n < sizeof BLE_DIAG_Q && b == BLE_DIAG_Q[ble_diag_n] ? ble_diag_n + 1u : 0xFFu);
+    }
+    if (cin != 4u) {                            /* the SysEx ended */
+        if (ble_diag_n == sizeof BLE_DIAG_Q)
+            ble_diag_req = 1;
+        ble_diag_n = 0xFFu;
+    }
+}
+
+static void ble_diag_put28(uint8_t *d, uint32_t v)   /* 28 bits, 7 a byte, least significant first */
+{
+    uint32_t i;
+    for (i = 0; i < 4u; i++)
+        d[i] = (uint8_t)((v >> (7u * i)) & 0x7Fu);
+}
+
+static void ble_diag_put14(uint8_t *d, uint32_t v)
+{
+    d[0] = (uint8_t)(v & 0x7Fu);
+    d[1] = (uint8_t)((v >> 7) & 0x7Fu);
+}
+
+/* the reply's 32 data bytes:
+ *   0 layout (1)   1,2 Beat It version (1, 4)   3 RADIO CAL (0 MISSING, 1 STOCK, 2 BACKUP)
+ *   4 flags: 1 RECEIVE on, 2 SEND on, 4 a central has the notifications on, 8 encrypted, 16 the second core stopped,
+ *            32 SEND OFF's note-offs still draining
+ *   5 the start-up step the last run hung at (0 none)   6 CLOCK IN (G_SYNC)   7 CLOCK OUT (G_CLKOUT)
+ *   8..11 IN   12..15 OUT   16..19 LOST in   20..23 LOST out   (BT CONNECTION's counts, 28 bits each)
+ *   24,25 connection interval (x 1.25 ms)   26,27 supervision timeout (x 10 ms)   28,29 ATT MTU   30,31 LL data length */
+static void ble_diag_reply(uint8_t *m)
+{
+    uint8_t *d = m + 5;
+    memcpy(m, BLE_DIAG_Q, 4u);
+    m[4] = 0x02u;
+    d[0] = 1u;
+    d[1] = 1u;
+    d[2] = 4u;
+    d[3] = (uint8_t)(ble_rf_src & 0x7Fu);
+    d[4] = (uint8_t)((ble_rx_on ? 1u : 0u) | (ble_tx_on ? 2u : 0u) | (ble_out_on ? 4u : 0u) |
+                     (ble_ll_encrypted() ? 8u : 0u) | (ble_cpu1_stopped ? 16u : 0u) | (ble_tx_drain ? 32u : 0u));
+    d[5] = (uint8_t)(ble_hung_step & 0x7Fu);
+    d[6] = (uint8_t)(song.g[G_SYNC] & 0x7F);
+    d[7] = (uint8_t)(song.g[G_CLKOUT] & 0x7F);
+    ble_diag_put28(d + 8, ble_rx_count);
+    ble_diag_put28(d + 12, ble_tx_count);
+    ble_diag_put28(d + 16, ble_rx_lost);
+    ble_diag_put28(d + 20, ble_tx_lost);
+    ble_diag_put14(d + 24, ble_ll_interval());
+    ble_diag_put14(d + 26, ble_ll_timeout());
+    ble_diag_put14(d + 28, ble_att_mtu());
+    ble_diag_put14(d + 30, ble_ll_tx_octets());
+    m[BLE_DIAG_LEN - 1u] = 0xF7u;
+}
+
+/* TIMER5 (ble_midi_poll): the reply into the out ring, every interrupt held (the audio ISR is the ring's producer: no
+ * push of its in the middle, and its messages never between the reply's packets). Not counted as OUT, not held to
+ * BMQ_KEEP; with SEND OFF the ring is opened for it alone, as for SEND OFF's note-offs (ble_tx_drain). No room (a
+ * congested link) or no central listening: dropped, the tool asks again */
+static void ble_diag_answer(void)
+{
+    uint8_t m[BLE_DIAG_LEN];
+    uint32_t i, f;
+    ble_diag_req = 0;
+    ble_diag_reply(m);
+    f = irq_save();
+    if (ble_on && ble_out_on && BMQ - (bmo_w - bmo_r) >= BLE_DIAG_SLOTS) {
+        for (i = 0; i < BLE_DIAG_LEN; i += 3u) {
+            uint32_t k = BLE_DIAG_LEN - i, cin = k > 3u ? 4u : k == 3u ? 7u : k == 2u ? 6u : 5u, pkt = cin, j;
+            for (j = 0; j < 3u && j < k; j++)
+                pkt |= (uint32_t)m[i + j] << (8u + 8u * j);
+            ble_out_q[bmo_w % BMQ] = pkt;
+            ble_out_ms[bmo_w % BMQ] = fm1_ms;
+            RING_PUBLISH();
+            bmo_w++;
+        }
+        if (!ble_tx_on)
+            ble_tx_drain = 1;
+        ble_diag_sent++;
+    }
+    irq_restore(f);
+}
+
 BLE_API void ble_app_midi_in(uint32_t pkt, uint16_t ts, uint16_t last_ts)   /* the BLE interrupts */
 {
     uint32_t cin = pkt & 15u, st = (pkt >> 8) & 0xFFu;
-    if (!ble_on || !ble_rx_on)
+    if (!ble_on)
+        return;
+    if (cin >= 4u && cin <= 7u) {
+        ble_diag_feed(pkt);                     /* (1.4) SysEx: only BT STATUS's query, answered, never played */
+        return;
+    }
+    if (!ble_rx_on)
         return;
     if (cin == 0xFu && (st == 0xF8u || st == 0xFAu || st == 0xFBu || st == 0xFCu)) {
         uint32_t age;
@@ -294,6 +402,8 @@ static void ble_midi_poll(void)                 /* the TIMER5 ISR (main.c): BLE 
     }
     if (ble_release)
         ble_notes_end();                        /* (after what the central had sent: those are in the ring now) */
+    if (ble_diag_req)
+        ble_diag_answer();                      /* (1.4) BT STATUS (after the moves above: its IN count is current) */
 }
 
 #if FELUCCA_FLASH

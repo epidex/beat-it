@@ -197,7 +197,10 @@ $BLEC -o "$OUT/ble_midi_test" tests/ble_midi_test.c && run "BLE-MIDI: the packet
 $BLEC -Itests/ble_fake -o "$OUT/ble_driver_test" tests/ble_driver_test.c && run "BLE: the FM-1 radio driver against a register double (no radio)" "$OUT/ble_driver_test"
 $BLEC -o "$OUT/ble_vm_test" tests/ble_vm_test.c && run "BLE: the stock VM parser (this unit's radio calibration) on a real FM-1 VM image" sh -c "cd tests && '$(cd "$OUT" && pwd)/ble_vm_test'"
 cc -O1 -g -fsanitize=address,undefined -fno-sanitize=shift -fno-sanitize-recover=all -w -Ibuild/gen -Ifirmware/src -o "$OUT/beatit_ble_test" tests/beatit_ble_test.c -lm &&
-    run "Beat It: Bluetooth MIDI in / out through SLOOP's MIDI path, the menu switches, stuck notes, the name" "$OUT/beatit_ble_test"
+    run "Beat It: Bluetooth MIDI in / out through SLOOP's MIDI path, the menu switches, stuck notes, the name, BT STATUS" "$OUT/beatit_ble_test"
+[ -x "$OUT/beatit_ble_test" ] && run "Beat It 1.4: the Linux test tool against the firmware's BLE-MIDI code (both directions)" python3 tests/bt_tool_interop.py "$OUT/beatit_ble_test"
+run "Beat It 1.4: the Linux test tool (codec, every step) against a simulated FM-1" python3 tools/beatit_bt_test.py --selftest
+run "Beat It 1.4: the Linux test tool's Bluetooth path through bleak's own API objects (skipped without bleak)" python3 tests/bt_tool_fake_bleak.py
 # Beat It: the radio calibration backup end to end (real storage / settings / midi_ble on a RAM flash), and the scope
 # settings' storage (both on editor_host.c, built as tests/editor_fuzz.sh builds it: SMP_DATA through a pointer)
 mkdir -p "$OUT/gen"
