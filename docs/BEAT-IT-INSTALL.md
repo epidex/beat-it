@@ -38,7 +38,7 @@ You need Chrome or Edge and a USB data cable. You don't need Linux or any build 
 5. The FM-1 restarts on the BEAT IT screen. Unplug it and plug it back in once so Windows finds its USB audio.
 6. Open **Menu > BLUETOOTH** and check **RADIO CAL** first. STOCK or BACKUP means Bluetooth can try to start. On STOCK, leave the FM-1 on for a few seconds until it says BACKED UP.
 
-**Beat-It-1.3.fwsc** is the same firmware on its own, for SLOOP's Python installer or the Firmware Hub. The same two files are also on the v1.3 release of your GitHub repository, epidex/beat-it.
+**Beat-It-1.3.fwsc** is the same firmware on its own, for SLOOP's Python installer or the Firmware Hub. GitHub's automatic build also built 1.3 from the same code, and its copies of both files are on the [v1.3 release](https://github.com/epidex/beat-it/releases/tag/v1.3) of your repository. They aren't byte-for-byte identical to the files here, because the build machine is different. Use either set, not a mix.
 
 ## First Bluetooth test, step by step
 
