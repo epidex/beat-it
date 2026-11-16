@@ -48,6 +48,12 @@ static int16_t settings_glo[4];                     /* ext.glo: project.c GLO_KE
 #define MIDI_KNOB_PREF_BYTE 20u
 /* Retired GRAIN row bytes 4..7 (past Felucca 1.0's stars in bits 0..11): 'U', 'V', version 1, USB VOLUME 0..100 %.
  * Untagged records take UA_VOLUME_DEFAULT. */
+/* (Beat It 2.0) BRIGHTNESS in favorites.c row 8 bytes 26..27: 'B', the step 1..4 (70 % .. 15 %); 0, 0 = 100 %.
+ * No Melodee setting uses these bytes (row 8 is retired GRAIN's; its presets never reach bit 208), so the
+ * setting shares nothing: plain Melodee keeps the two bytes as they are and reads nothing from them */
+#include "bright.h"
+#define BRIGHT_PREF_ROW 8u
+#define BRIGHT_PREF_BYTE 26u
 #define USB_VOLUME_ROW 8u
 #define USB_VOLUME_BYTE 4u
 /* Retired DIGITAL row, outside all live preset/settings bits. Kept by older
@@ -99,6 +105,10 @@ static int settings_import(persist_t *p, int n)
 #endif
     p->palette = palette_to_stored(palette_from_stored(p->palette));
     settings_screen=p->favorites.factory[15][27] < 8u ? p->favorites.factory[15][27] : 0u;
+    {                                                  /* (Beat It 2.0) BRIGHTNESS: tagged; anything else is 100 % */
+        const uint8_t *b = p->favorites.factory[BRIGHT_PREF_ROW] + BRIGHT_PREF_BYTE;
+        lcd_bright_set(b[0] == 'B' && b[1] < BRIGHT_N ? b[1] : 0u);
+    }
     settings_autosave = p->favorites.factory[15][28] != AUTOSAVE_OFF_TAG;
     {
         const uint8_t *m = p->favorites.factory[1] + MIDI_KNOB_PREF_BYTE;
@@ -187,6 +197,17 @@ static void settings_export(persist_t *p)
     }
 #endif
     p->favorites.factory[15][27]=settings_screen;
+    {                                                  /* (Beat It 2.0) below 100 %: tagged; 100 %: our own tag cleared,
+                                                        * any other bytes there left exactly as they were */
+        uint8_t *b = p->favorites.factory[BRIGHT_PREF_ROW] + BRIGHT_PREF_BYTE;
+        if (lcd_bright_step) {
+            b[0] = 'B';
+            b[1] = lcd_bright_step;
+        } else if (b[0] == 'B') {
+            b[0] = 0u;
+            b[1] = 0u;
+        }
+    }
     p->favorites.factory[15][28] = settings_autosave ? 0u : AUTOSAVE_OFF_TAG;
     p->ext.usb_off=(p->ext.usb_off&3u)|(settings_budget!=VOICE_BUDGET_DEFAULT?WORK_BUDGET_TAG|((uint32_t)settings_budget<<8):0u);
     p->ext.boot = settings_boot;

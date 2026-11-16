@@ -587,7 +587,7 @@ def main():
         except ValueError as error:
             raise SystemExit(str(error)) from error
         VERSION = "v" + a.release.lower()      # e.g. v1.0, v1.1-rc1
-        name = f"melodee-{a.release}.fwsc"
+        name = f"Beat-It-{a.release}.fwsc"
     if a.nightly:
         revision = subprocess.check_output(["git", "rev-parse", "--short=7", "HEAD"], cwd=SRC, text=True).strip()
         VERSION = "next-" + revision
@@ -627,7 +627,7 @@ def main():
         cpu_flags["MELODEE_DUAL_CORE"] = 1
         cpu_flags["MELODEE_CORE1_FALLBACK"] = int(os.environ.get("MELODEE_CORE1_FALLBACK", "1"))
         a.cpu_manifest.write_text(json.dumps(dict(package=str((OUT / name).resolve()),
-            package_sha256=hashlib.sha256(pkg).hexdigest(), editor_identity=("MELODEE " + (VERSION or "v1.6.1"))[:24],
+            package_sha256=hashlib.sha256(pkg).hexdigest(), editor_identity=("BEAT IT " + (VERSION or "v2.0"))[:24],
             source_revision=subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=SRC, text=True).strip(),
             source_status=subprocess.check_output(["git", "status", "--short"], cwd=SRC, text=True).splitlines(),
             firmware_sha256=cpu_sources, flags=cpu_flags,
@@ -637,7 +637,7 @@ def main():
         rel = OUT / f"release-{a.release}"
         shutil.rmtree(rel, ignore_errors=True)
         (rel / "LICENSES").mkdir(parents=True)
-        app = f"melodee-{a.release}-app.bin"
+        app = f"Beat-It-{a.release}-app.bin"
         (rel / name).write_bytes(pkg)
         (rel / app).write_bytes(img)
         (rel / "SHA256SUMS").write_text("".join(f"{hashlib.sha256(b).hexdigest()}  {n}\n"

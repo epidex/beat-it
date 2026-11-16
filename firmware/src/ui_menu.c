@@ -12,6 +12,7 @@
  * CALIBRATION (the setup screen: HARDWARE CALIBRATION), ABOUT.
  * PRESETS scrolls from ABOUT through all credits. ui.menu: 1 list, 2 information. */
 /* ------------------------------------------------------------ menu --- */
+#include "bright.h"                      /* (Beat It 2.0) BRIGHTNESS */
 #define MENU_HEAD H_HEAD                 /* the menu's own title strip */
 enum { MI_COLOR, MI_FONT, MI_HOLD, MI_LIGHTS,
 #if MELODEE_USB_AUDIO
@@ -24,7 +25,7 @@ enum { MI_COLOR, MI_FONT, MI_HOLD, MI_LIGHTS,
        MI_BLE,
 #endif
        MI_MIDI_KNOBS, MI_MIDI_MODE, MI_MIDI_LEARN,
-       MI_CLICK, MI_CLICK_LEVEL, MI_COUNTIN, MI_PREVIEW, MI_ADD, MI_AUTOSAVE, MI_PICKER, MI_ACCEL, MI_HOME_SEL, MI_GLO_SEL, MI_TRACKS, MI_SCREEN, MI_PANEL, MI_ABOUT, MI_DESIGNER, MI_BACK,
+       MI_CLICK, MI_CLICK_LEVEL, MI_COUNTIN, MI_PREVIEW, MI_ADD, MI_AUTOSAVE, MI_PICKER, MI_ACCEL, MI_HOME_SEL, MI_GLO_SEL, MI_TRACKS, MI_BRIGHT, MI_SCREEN, MI_PANEL, MI_ABOUT, MI_DESIGNER, MI_BACK,
        MI_COUNT };
 static const char *const MI_NAME[MI_COUNT] = {"COLOR", "FONT", "HOLD", "LIGHTS",
 #if MELODEE_USB_AUDIO
@@ -38,7 +39,7 @@ static const char *const MI_NAME[MI_COUNT] = {"COLOR", "FONT", "HOLD", "LIGHTS",
 #endif
                                               "MIDI KNOBS", "MIDI MODE", "MIDI LEARN",
                                               "AUDIO CLICK", "CLICK LEVEL", "COUNT-IN", "NOTE PREVIEW", "CHORD ENTRY",
-                                              "AUTOSAVE", "PICKER POPUPS", "KNOB ACCEL", "HOME SELECT", "GLO SELECT", "UNUSED TRACKS", "SCREEN OFF", "CALIBRATION", "ABOUT", "SOUND DESIGNER", "BACK"};
+                                              "AUTOSAVE", "PICKER POPUPS", "KNOB ACCEL", "HOME SELECT", "GLO SELECT", "UNUSED TRACKS", "BRIGHTNESS", "SCREEN OFF", "CALIBRATION", "ABOUT", "SOUND DESIGNER", "BACK"};
 #if MELODEE_USB_AUDIO
 /* USB AUDIO's four settings, as ua_off_want (UA_OFF_OUT | UA_OFF_IN) */
 static const char *const MI_USB_NAME[4] = {"IN+OUT", "IN", "OUT", "OFF"};
@@ -167,13 +168,14 @@ static int32_t menu_document(int32_t y, int draw)
 {
     uint32_t i;
     if (draw) {                                       /* (docs/design: mock/r6_pages About, the large type) */
-        cv_text(6, y + 2, TY_HR, "Melodee", T_THEME);
+        cv_text(6, y + 2, TY_HR, "Beat It", T_THEME);
         cv_text(6, y + 60, TY_TX, MELODEE_VERSION, T_TEXT);
         cv_text(6, y + 86, TY_LB, __DATE__, T_MID);
         draw_about_qr(158, y + 66);
     }
     y = menu_text("Multi-engine synthesizer", y + 146, T_SEC, draw);
-    y = menu_text("\xA9 2026 Kerem Kilic, Ellic Studio", y + 6, T_TEXT, draw);
+    y = menu_text("Beat It 2.0: a fork of Melodee 1.6.1", y + 6, T_TEXT, draw);
+    y = menu_text("Melodee \xA9 2026 Kerem Kilic, Ellic Studio", y, T_TEXT, draw);
     y = menu_text("Based on Felucca by Leo Kuroshita, H\xFCgelton Instruments", y, T_TEXT, draw);
     y = menu_text("GPL-3.0-only", y, T_TEXT, draw);
     y = menu_text("keremimo.github.io/melodee", y, T_MID, draw);
@@ -329,6 +331,7 @@ static void draw_menu(void)
                 if (i == MI_TRACKS) value = GLO_SELECT & TRACKS_HIDE ? "HIDE" : "SHOW";
                 if (i == MI_SCREEN) value = (const char *const[]){"NEVER", "5 MIN", "15 MIN", "30 MIN", "60 MIN"}[scr_get()];
                 if (i == MI_LIGHTS) value = LIGHTS_NAME[settings_lights % LIGHTS_N];
+                if (i == MI_BRIGHT) value = BRIGHT_NAME[lcd_bright_step % BRIGHT_N];
 #if MELODEE_USB_AUDIO
                 if (i == MI_USB_INPUT) value = ua_tracks_want ? "4 TRACKS" : "STEREO";
                 if (i == MI_USB_VOLUME) { fmt_int(b, settings_usb_volume); str_cpy(b + str_len(b), "%", 4); value = b; }
@@ -522,6 +525,14 @@ static void menu_input(uint32_t oct)                  /* oct: ui_input.c oct_tap
     }
     if ((s || ok) && ui.menu == 1 && ui.menu_sel == MI_GLO_SEL) {    /* .. GLO SELECT the same */
         glo_select_set(hs_step(glo_select(), s));
+        ui.force = 1; ok = 0;
+    }
+    if ((s || ok) && ui.menu == 1 && ui.menu_sel == MI_BRIGHT) {    /* (Beat It 2.0) KNOB 1 right dimmer, left
+                                                                     * brighter; OCT+ steps and wraps (saved when the
+                                                                     * menu closes) */
+        uint32_t v = lcd_bright_step % BRIGHT_N;
+        v = s > 0 ? (v + 1u < BRIGHT_N ? v + 1u : v) : s < 0 ? (v ? v - 1u : 0u) : (v + 1u) % BRIGHT_N;
+        lcd_bright_set(v);
         ui.force = 1; ok = 0;
     }
     if ((s || ok) && ui.menu==1 && ui.menu_sel==MI_SCREEN) {

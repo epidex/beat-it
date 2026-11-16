@@ -383,10 +383,10 @@ static void draw_head(void)
         }
         if (!ui.home) {                                 /* a page: where it is in its family */
             head_pages(x + 6, 236 - cw - (low ? 22 : 0) - hw);
-        } else if (x + 6 + 28 <= 236 - cw - (low ? 22 : 0) - hw - 6) {   /* HOME: its two pages (Stage, the chord view),
-                                                                   * where there is room */
+        } else if (x + 6 + 40 <= 236 - cw - (low ? 22 : 0) - hw - 6) {   /* HOME: its three pages (Stage, the chord
+                                                                   * view, the scope: Beat It 2.0), where there is room */
             uint32_t i;
-            for (i = 0, x += 6; i < 2u; i++) {
+            for (i = 0, x += 6; i < 3u; i++) {
                 int32_t w = i == ui.home_pg ? 16 : 6;
                 cv_rrect(x, H_HEAD / 2 - 3, w, 6, 3, i == ui.home_pg ? T_THEME : T_LINE, T_BG);
                 x += w + 6;
@@ -721,6 +721,7 @@ static void draw_foot(void)
 #include "ui_sections.c"                                /* the EDIT pages in sections, the map */
 #include "ui_stage.c"                                   /* Stage (HOME) */
 #include "ui_view.c"                                    /* HOME's second page: the chord, pictures of what plays */
+#include "ui_scope.c"                                   /* (Beat It 2.0) HOME's third page: the full-screen scope */
 #include "ui_browser.c"                                 /* SAVE > PRESETS, the sound browser */
 #include "ui_patterns.c"                                /* SEQ > PATTERNS, SEQ > SONG */
 static int own_screen(void);
@@ -1043,7 +1044,7 @@ static void confirm_text(char *a, char *b)
 #if MELODEE_BLE
     case CF_BLE_FORGET:
         str_cpy(a, "FORGET BLE PAIRINGS?", 24);
-        str_cpy(b, "Forget Melodee on the peer too", 32);
+        str_cpy(b, "Forget Beat It on the peer too", 32);
         break;
 #endif
     case CF_CLEAR_SHARED:                               /* SHARED's sheet */
@@ -1235,7 +1236,9 @@ static void draw_page(void)
         melodee_dbg.stage = 4;
         draw_columns();
         melodee_dbg.stage = 5;
-        if (ui.home && ui.home_pg)                      /* HOME's second page (ui_view.c) */
+        if (ui.home && ui.home_pg == 2u)                /* (Beat It 2.0) HOME's third page (ui_scope.c) */
+            scope_full_draw();
+        else if (ui.home && ui.home_pg)                 /* HOME's second page (ui_view.c) */
             view_draw();
         else if (ui.home)                               /* Stage: its panel and the lanes (ui_stage.c), no footer */
             stage_draw();

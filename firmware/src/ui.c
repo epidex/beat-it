@@ -147,7 +147,7 @@ static uint8_t sync_reload;                  /* engine / preset / project / user
 static struct {
     uint8_t designer_mode;       /* the sound designer: START, the stages (ui_designer.c) */
     uint8_t home;
-    uint8_t home_pg;             /* HOME's page: 0 Stage, 1 the chord view (ui_view.c); HOME tapped on HOME turns it */
+    uint8_t home_pg;             /* HOME's page: 0 Stage, 1 the chord view (ui_view.c), 2 the scope (ui_scope.c); HOME tapped on HOME steps it */
     uint8_t drum_sound;
     uint8_t page;                /* index into PAGES */
     uint8_t fam_last[FAM_COUNT]; /* last page used per family */

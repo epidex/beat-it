@@ -21,7 +21,7 @@ static void installer_report_value(const char *name, uint32_t value)
 static int installer_report_frame(const uint8_t *p, uint32_t n)
 {
     if (n!=3 || p[0]!=0x7D || p[1]!=0x4C || p[2]!=0x47) return 0;
-    installer_report_line("Melodee " MELODEE_ID);
+    installer_report_line("Beat It " MELODEE_ID);
     if (fm1_crash.magic==FM1_CRASH_MAGIC) {
         installer_report_value("CPU0 count",fm1_crash.count);
         installer_report_value("CPU0 vector",fm1_crash.vec);

@@ -1075,6 +1075,9 @@ static int test_home_view(void)
     press(B_HOME);
     bad += check("HOME on Stage: the second page (the chord view)", ui.home && ui.home_pg == 1u);
     press(B_HOME);
+    bad += check("  HOME again: the third page (the scope, Beat It 2.0)", ui.home && ui.home_pg == 2u);
+    frame();
+    press(B_HOME);
     bad += check("  HOME again: Stage", ui.home && ui.home_pg == 0u);
     press(B_HOME);
     open_family(FAM_EDIT); frame();
@@ -1745,12 +1748,13 @@ static int test_display_preferences(void)
     {
         int steps_ok = settings.palette == 2;
         for (uint32_t k = 3; k < NPALETTES; k++) { turn(EN_K1, 1); steps_ok &= settings.palette == k; }
-        bad += check("COLOR KNOB 1 steps on through SUNSET .. LO-FI, then wraps to NIGHT",
-                     steps_ok && (turn(EN_K1, 1), settings.palette == UI_DEFAULT_INDEX));
+        bad += check("COLOR KNOB 1 steps on through SUNSET .. LO-FI, PURPLE, then wraps to NIGHT",
+                     steps_ok && settings.palette == NPALETTES - 1u && !strcmp(UI_PALETTES[NPALETTES - 1u].name, "PURPLE") &&
+                     (turn(EN_K1, 1), settings.palette == 0u));   /* (Beat It 2.0: PURPLE, the default, is last) */
     }
     press(B_OCTDN);
     bad += check("OCT- leaves display preferences without changing musical state",
-                 !ui.menu && settings.palette == UI_DEFAULT_INDEX && !memcmp(sounds, trk, sizeof sounds));
+                 !ui.menu && settings.palette == 0u && !memcmp(sounds, trk, sizeof sounds));
     return bad;
 }
 
@@ -4722,7 +4726,7 @@ static int test_bughunt_ui2(void)
  * asks gfx.c text_has first and falls back to VL) */
 static int test_large_face(void)
 {
-    static const char *const FIXED[] = {"MELODEE", "Melodee", "0123456789", "C#4 / .."};   /* main.c, ui_menu.c About;
+    static const char *const FIXED[] = {"BEAT IT", "Beat It", "0123456789", "C#4 / .."};   /* main.c, ui_menu.c About;
                                                                                          * ui_draw.c draw_uboot */
     uint32_t i, missing = 0;
     const char *s;

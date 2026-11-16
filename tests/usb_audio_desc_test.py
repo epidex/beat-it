@@ -27,7 +27,7 @@ def descriptors(audio, cdc, loader=0):
     product = bytes(ord(x) if isinstance(x, str) else x for x in values)
     assert product[0] == len(product) and product[1] == 3
     name = product[2:].decode("utf-16-le")
-    assert name == ("Melodee FM-1 Update" if loader else "Melodee FM-1")
+    assert name == ("Beat It FM-1 Update" if loader else "Beat It FM-1")   # (Beat It 2.0; FM-1 kept)
     assert re.search(r"fm-1|felucca|ota|composite|sinco|usb-midi", name, re.I)
     body = re.search(r"CFG_DESC\[.*?\]\s*=\s*\{(.*?)\};", source, re.S)[1]
     data = bytes(int(x.strip(), 0) for x in body.split(",") if x.strip())

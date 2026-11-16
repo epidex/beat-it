@@ -261,11 +261,11 @@ static const uint8_t STR1[] = {26, 3, 'E', 0, 'l', 0, 'l', 0, 'i', 0, 'c', 0, ' 
 /* Keep FM-1 in the USB name: macOS may retain this MIDI port name after a
  * firmware switch, and other installers recognise the hardware family. */
 #ifdef MELODEE_LOADER
-static const uint8_t STR2[] = {40, 3, 'M', 0, 'e', 0, 'l', 0, 'o', 0, 'd', 0, 'e', 0, 'e', 0, ' ', 0,
+static const uint8_t STR2[] = {40, 3, 'B', 0, 'e', 0, 'a', 0, 't', 0, ' ', 0, 'I', 0, 't', 0, ' ', 0,
                                'F', 0, 'M', 0, '-', 0, '1', 0, ' ', 0, 'U', 0, 'p', 0,
                                'd', 0, 'a', 0, 't', 0, 'e', 0};
 #else
-static const uint8_t STR2[] = {26, 3, 'M', 0, 'e', 0, 'l', 0, 'o', 0, 'd', 0, 'e', 0, 'e', 0, ' ', 0,
+static const uint8_t STR2[] = {26, 3, 'B', 0, 'e', 0, 'a', 0, 't', 0, ' ', 0, 'I', 0, 't', 0, ' ', 0,
                                'F', 0, 'M', 0, '-', 0, '1', 0};
 #endif
 #if MELODEE_USB_AUDIO                                   /* audio uses the product name (STR2) */

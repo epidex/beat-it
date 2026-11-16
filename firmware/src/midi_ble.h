@@ -2,7 +2,7 @@
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
 #pragma once
 #define BLE_API static
-#define BLE_DEVICE_NAME "Melodee"
+#define BLE_DEVICE_NAME "BEAT IT"   /* Beat It 2.0 (Melodee: "Melodee") */
 #define BLE_CENTRAL 1
 #define BLE_MIDI_INITIAL_READ 1
 #define FELUCCA_BLE_BOND 1
