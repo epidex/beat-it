@@ -1,5 +1,7 @@
 # Beat It
 
+> **New: Beat It 2.0** is a fresh start on [Melodee](https://github.com/keremimo/melodee) 1.6.1 (purple theme, saved brightness, full-screen pitch-coloured scope, Melodee's Bluetooth MIDI). Open the installer at **[epidex.github.io/beat-it](https://epidex.github.io/beat-it/)** in Chrome or Edge on Windows, or download it from the [Beat It 2.0 release](https://github.com/epidex/beat-it/releases/tag/v2.0). Source and README: the [`beat-it-2.0` branch](https://github.com/epidex/beat-it/tree/beat-it-2.0). Simulator-tested only, not yet run on a real FM-1. The rest of this page covers the SLOOP-based versions 1.0 to 1.5.
+
 **Custom firmware for the M-VAVE FM-1**, built on [SLOOP](https://github.com/isod89/sloop-fm1) 2.8.5 (GPL-3.0-only). Beat It keeps SLOOP's drums and its two FM engines, and adds a purple-and-black theme, a BEAT IT boot screen, a full-screen colour scope, a MIDI menu and experimental Bluetooth MIDI (Optimist's open-source driver).
 
 > **Status: simulator only.** Every version builds and passes its tests in a simulator. None has run on a real FM-1 yet, and the Bluetooth code has never transmitted over a real radio. Install at your own risk.
